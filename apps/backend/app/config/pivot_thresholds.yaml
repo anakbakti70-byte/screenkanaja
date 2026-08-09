@@ -1,0 +1,20 @@
+pivot_detection:
+  method: "atr_zigzag"
+  atr_period: 14
+  atr_multiplier: 1.5
+  min_bars_between_pivots: 3
+
+movement_analysis:
+  major_percentile: 70
+  lookback_window: 100
+
+fibonacci:
+  retracement_zones:
+    - [0.382, 0.618]
+  extension_targets:
+    - 1.0
+    - 1.618
+    - 2.618
+
+confirmation:
+  min_body_percentage: 50
