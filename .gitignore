@@ -11,6 +11,7 @@ apps/backend/venv/
 *.tar.gz
 data/
 apps/backend/data/
+*.bak
 Auto-updated
 Auto-updating
 Downloading
