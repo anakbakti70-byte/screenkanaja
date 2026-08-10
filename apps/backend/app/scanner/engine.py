@@ -82,6 +82,13 @@ class ScannerEngine:
             
             # Rule §1.3: Filter Price <= 1000
             last_price = float(df['Close'].iloc[-1])
+
+            # Update last_price in stock_master if 1d for better accuracy
+            if timeframe == "1d":
+                try:
+                    supabase.table("stock_master").update({"last_price": last_price}).eq("symbol", symbol).execute()
+                except: pass
+
             if last_price > 1000: return None
 
             # Rule §1.3: Liquidity Filtering (Rupiah Value > 1 Billion)

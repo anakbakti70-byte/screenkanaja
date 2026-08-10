@@ -10,17 +10,19 @@ pkill -f "uvicorn app.main:app" 2>/dev/null
 pkill -f "vite" 2>/dev/null
 pkill -f "run_scanner.py" 2>/dev/null
 
-# Cleanup log files
+# Cleanup log files and local cache files
 rm -f "$PROJECT_ROOT/backend.log" "$PROJECT_ROOT/frontend.log"
+rm -rf "$PROJECT_ROOT/data/cache/"*.parquet
+rm -rf "$PROJECT_ROOT/apps/backend/data/cache/"*.parquet
 touch "$PROJECT_ROOT/backend.log" "$PROJECT_ROOT/frontend.log"
 
 # Load Virtual Environment
 source venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$PROJECT_ROOT/apps/backend
 
-# 1. Validasi & Migrasi Database
-echo "🔍 [1/4] Memeriksa & Menyiapkan Tabel Database..."
-python scripts/check_tables.py
+# 1. Validasi & Migrasi Database (Otomatis Membuat Tabel Cache jika belum ada)
+echo "🔍 [1/4] Memeriksa & Menyiapkan Tabel Database (Supabase)..."
+python3 scripts/check_tables.py
 if [ $? -ne 0 ]; then
     echo "❌ Gagal menyiapkan database. Periksa koneksi Supabase Anda."
     exit 1
@@ -28,7 +30,7 @@ fi
 
 # 2. Sinkronisasi Data Master (Initial Sync)
 echo "📊 [2/4] Sinkronisasi Data Saham IDX (Latar Belakang)..."
-python scripts/sync_universe.py &
+python3 scripts/sync_universe.py &
 SYNC_PID=$!
 
 # 3. Jalankan Backend & Frontend secara Paralel
@@ -42,7 +44,6 @@ echo "   ✅ Backend berjalan di port 8000 (Log: backend.log)"
 
 # Frontend - Force clean install if needed and run
 cd ../frontend
-# We run npm install once to ensure dependencies are correct after package.json change
 echo "   📦 Verifikasi dependensi frontend..."
 npm install >> "$PROJECT_ROOT/frontend.log" 2>&1
 rm -rf node_modules/.vite
@@ -56,7 +57,7 @@ cd $PROJECT_ROOT
 (
     while true; do
         echo "--- SCAN START: $(date) ---"
-        python scripts/run_scanner.py
+        python3 scripts/run_scanner.py
         echo "--- SCAN END: Menunggu 15 Menit ---"
         sleep 900
     done
@@ -70,7 +71,6 @@ echo "🛠️  Backend API   : http://localhost:8000"
 echo "💡 Tekan Ctrl+C untuk mematikan semua layanan sekaligus."
 echo "-------------------------------------------------------"
 
-# Fungsi untuk mematikan semua proses saat Ctrl+C ditekan
 cleanup() {
     echo -e "\n🛑 Menghentikan semua layanan..."
     kill $SYNC_PID $BACKEND_PID $FRONTEND_PID $SCANNER_PID 2>/dev/null
@@ -79,6 +79,4 @@ cleanup() {
 }
 
 trap cleanup SIGINT
-
-# Tunggu proses agar terminal tetap terbuka
 wait

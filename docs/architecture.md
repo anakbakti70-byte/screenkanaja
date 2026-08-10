@@ -115,7 +115,7 @@ tidak difilter. Urutan yang disarankan:
 3. Baru jalankan market_structure + strategy engine (paling mahal)
 ```
 
-Cache OHLCV di `data/cache/` (lihat `data-sources.md`) supaya tidak
+Cache OHLCV di tabel `price_snapshot` Supabase (lihat `data-sources.md`) supaya tidak
 fetch ulang candle yang sudah pernah diambil di hari yang sama.
 
 ## 6. Backtesting sebagai Modul Inti

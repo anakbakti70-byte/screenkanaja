@@ -65,7 +65,29 @@ CREATE TABLE IF NOT EXISTS divergence_signal (
     UNIQUE(symbol, method, timeframe)
 );
 
--- 4. Users
+-- 4. Cache Khusus (Hemat Database)
+CREATE TABLE IF NOT EXISTS ohlcv_cache (
+    symbol            VARCHAR(20),
+    timeframe         VARCHAR(10),
+    ts                TIMESTAMP WITH TIME ZONE,
+    open              NUMERIC,
+    high              NUMERIC,
+    low               NUMERIC,
+    close             NUMERIC,
+    volume            BIGINT,
+    updated_at        TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    PRIMARY KEY (symbol, timeframe, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_ohlcv_cache_ts ON ohlcv_cache (ts DESC);
+
+-- Optimasi Performa (Indexes tambahan)
+CREATE INDEX IF NOT EXISTS idx_stock_master_active_price ON stock_master (is_active, last_price) WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS idx_stock_master_listing ON stock_master (listing_date DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_signal_created_at ON divergence_signal (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_signal_score ON divergence_signal (score DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_signal_market_tf ON divergence_signal (market, timeframe);
+
+-- 5. Users
 CREATE TABLE IF NOT EXISTS users (
     id                BIGSERIAL PRIMARY KEY,
     username          VARCHAR(255) UNIQUE NOT NULL,
@@ -88,6 +110,14 @@ SQL_INSERT_ADMIN = """
 INSERT INTO users (username, hashed_password, balance)
 SELECT 'admin', '$2b$12$6uX7e5M8p6M5Zk/P1z9/8O6vL.YxZ7X3U1Z8u7z8Y7y6v5u4t3s2r', 100000000
 WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin');
+"""
+
+SQL_MAINTENANCE = """
+-- Hapus cache yang sangat lama (lebih dari 3 bulan) agar DB tetap ringan
+DELETE FROM ohlcv_cache WHERE ts < NOW() - INTERVAL '90 days';
+
+-- Hapus signal lama (lebih dari 6 bulan) jika statusnya bukan 'READY' atau sudah basi
+DELETE FROM divergence_signal WHERE created_at < NOW() - INTERVAL '180 days';
 """
 
 def setup_database():
@@ -117,6 +147,9 @@ def setup_database():
 
             print("👤 Ensuring admin user exists...")
             cur.execute(SQL_INSERT_ADMIN)
+
+            print("🧹 Running maintenance (Cleaning old data)...")
+            cur.execute(SQL_MAINTENANCE)
 
             print("✅ Database schema verified and updated.")
         conn.close()

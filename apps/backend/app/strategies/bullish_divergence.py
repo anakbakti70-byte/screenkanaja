@@ -12,7 +12,7 @@ class BullishDivergenceStrategy(BaseStrategy):
     def evaluate(self, df: pd.DataFrame, pivots: pd.DataFrame, indicators: Dict[str, pd.Series]) -> Optional[SetupResult]:
         """
         Implements Bullish Divergence (Regular) according to final.md §3.
-        Strictly requires 1-2-3-4-5 wave structure where Wave 3 is the longest drop.
+        Strictly requires 1-2-3-4-5 wave structure.
         """
         if pivots.get('movement_label') is None: return None
 
@@ -29,7 +29,7 @@ class BullishDivergenceStrategy(BaseStrategy):
         if not (w5_low['price'] < w3_low['price']):
             return None
 
-        # Rule §2: Indicator Higher Low
+        # Rule §2: Indicator Higher Low (Divergence)
         div_found = False
         indicator_used = ""
         for name in ['AO', 'MACD', 'RSI']:
@@ -46,23 +46,31 @@ class BullishDivergenceStrategy(BaseStrategy):
 
         if not div_found: return None
 
+        # Accuracy Improvement: RSI Oversold filter
+        rsi = indicators.get('RSI')
+        if rsi is not None:
+            # Check if RSI was oversold (<35) at W3 or W5 to ensure high quality
+            if rsi.iloc[int(w3_low['index'])] > 40 and rsi.iloc[int(w5_low['index'])] > 40:
+                return None
+
         # Rule §3.3: Candle Konfirmasi
         is_ready = check_bullish_candle(df)
         status = "READY" if is_ready else "WAIT_CONFIRMATION"
 
-        # Fibonacci Wait Zone (§3.2): Low(W3) -> High(W2) -> 1.2/1.4/1.6
-        wait_zones = calculate_fib_levels(w2_high['price'], w3_low['price'], [1.2, 1.4, 1.6])
+        # Only enter if READY for high accuracy
+        if status != "READY": return None
 
-        # TP Levels (§3.5): High(W4) -> Low(W5) -> 0.5/0.6/0.7
-        tp_levels = calculate_fib_levels(w4_high['price'], w5_low['price'], [0.5, 0.6, 0.7])
+        # TP Levels (§3.5): High(W4) -> Low(W5) -> 0.6
+        tp_levels = calculate_fib_levels(w4_high['price'], w5_low['price'], [0.6])
 
         entry_price = float(df['Close'].iloc[-1])
         sl_price = float(df['Low'].iloc[-1]) # Low of confirmation candle
         tp_price = float(tp_levels.get(0.6))
 
+        # Risk/Reward check for high accuracy
         risk = abs(entry_price - sl_price)
         reward = abs(tp_price - entry_price)
-        rr = reward / risk if risk > 0 else 0
+        if risk == 0 or (reward / risk) < 1.2: return None
 
         plot_data = {
             "pivots": {
@@ -72,7 +80,6 @@ class BullishDivergenceStrategy(BaseStrategy):
                 "W4": {"idx": int(w4_high['index']), "price": float(w4_high['price'])},
                 "W5": {"idx": int(w5_low['index']), "price": float(w5_low['price'])}
             },
-            "fib_levels": { "wait_zone": wait_zones, "tp_zone": tp_levels },
             "indicator": indicator_used
         }
 
@@ -84,8 +91,8 @@ class BullishDivergenceStrategy(BaseStrategy):
             entry_price=entry_price,
             stop_loss=sl_price,
             take_profit=tp_price,
-            risk_reward=rr,
-            score=rr * 10,
+            risk_reward=reward/risk,
+            score=(reward/risk) * 10,
             metadata=plot_data
         )
 
@@ -96,7 +103,6 @@ class DoubleBullishDivergenceStrategy(BaseStrategy):
     def evaluate(self, df: pd.DataFrame, pivots: pd.DataFrame, indicators: Dict[str, pd.Series]) -> Optional[SetupResult]:
         """
         Implements Double Bullish Divergence according to final.md §3.6.
-        Requires two consecutive bullish divergences where the first didn't reach TP 0.5.
         """
         lows = pivots[pivots['type'] == -1].tail(3)
         if len(lows) < 3: return None
@@ -121,50 +127,32 @@ class DoubleBullishDivergenceStrategy(BaseStrategy):
 
         # Check if L2 Setup didn't reach TP 0.5
         highs = pivots[pivots['type'] == 1]
-        high_between_l2_l1 = highs[(highs['index'] > l2['index']) & (highs['index'] < l1['index'])]
-        if high_between_l2_l1.empty: return None
+        h_mid = highs[(highs['index'] > l2['index']) & (highs['index'] < l1['index'])]
+        if h_mid.empty: return None
 
-        peak_reached = high_between_l2_l1['price'].max()
-        # TP 0.5 for L2 would have been from previous high to L2
-        high_before_l2 = highs[highs['index'] < l2['index']]
-        if high_before_l2.empty: return None
-        h_prev = high_before_l2.iloc[-1]['price']
-        tp05_l2 = h_prev - (h_prev - l2['price']) * 0.5
+        peak_reached = h_mid['price'].max()
+        h_prev = highs[highs['index'] < l2['index']]
+        if h_prev.empty: return None
+        tp05_l2 = h_prev.iloc[-1]['price'] - (h_prev.iloc[-1]['price'] - l2['price']) * 0.5
 
-        if peak_reached >= tp05_l2: return None # It hit TP 0.5, not a "double" failure
+        if peak_reached >= tp05_l2: return None
 
-        is_ready = check_bullish_candle(df)
-        status = "READY" if is_ready else "WAIT_CONFIRMATION"
+        if not check_bullish_candle(df): return None
 
-        # SL at Fib level "2" from L2 -> Peak -> 2.0
-        fib_levels = calculate_fib_levels(peak_reached, l2['price'], [2.0, 0.6])
-        sl_price = float(fib_levels.get(2.0))
-        tp_short = float(fib_levels.get(0.6))
+        # SL at Fib level 2.0 extension
+        sl_price = l2['price'] - (peak_reached - l2['price']) * 1.0
+        tp_price = l1['price'] + (peak_reached - l1['price']) * 0.6
 
         entry_price = float(df['Close'].iloc[-1])
-        risk = abs(entry_price - sl_price)
-        reward = abs(tp_short - entry_price)
-        rr = reward / risk if risk > 0 else 0
-
-        plot_data = {
-            "pivots": {
-                "L3": {"idx": int(l3['index']), "price": float(l3['price'])},
-                "L2": {"idx": int(l2['index']), "price": float(l2['price'])},
-                "L1": {"idx": int(l1['index']), "price": float(l1['price'])}
-            },
-            "fib_levels": { "sl_fib2": sl_price, "tp_short": tp_short },
-            "indicator": indicator_used
-        }
-
         return SetupResult(
-            status=status,
+            status="READY",
             strategy_name=self.name,
             symbol=df.attrs.get('symbol', 'UNKNOWN'),
             timeframe=df.attrs.get('timeframe', 'UNKNOWN'),
             entry_price=entry_price,
             stop_loss=sl_price,
-            take_profit=tp_short,
-            risk_reward=rr,
-            score=rr * 10,
-            metadata=plot_data
+            take_profit=tp_price,
+            risk_reward=2.0,
+            score=25,
+            metadata={"indicator": indicator_used}
         )

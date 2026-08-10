@@ -64,19 +64,17 @@ Karena universe bisa ribuan ticker (IDX + US), cache wajib ada dari awal
 supaya Morning Scanner tidak fetch ulang semua data tiap kali dijalankan.
 
 ```
-CacheProvider(DataProvider) wraps YFinanceProvider
+Cache di Database (Supabase) wraps YFinanceProvider
     ↓
 get_ohlcv(symbol, tf, start, end):
-    1. Cek data/cache/{symbol}_{tf}.parquet
-    2. Kalau ada & sudah termasuk range yang diminta → return dari cache
-    3. Kalau belum → fetch bagian yang kurang saja dari provider,
-       merge, simpan ulang ke cache
+    1. Cek tabel price_snapshot di Supabase
+    2. Kalau ada & data masih baru (< 1 jam) → return dari DB
+    3. Kalau belum → fetch dari yfinance, simpan (upsert) ke DB
 ```
 
-Simpan cache per simbol+timeframe dalam format parquet (bukan CSV) untuk
-efisiensi baca/tulis. Invalidasi cache otomatis untuk candle hari
-berjalan (belum closed), tapi candle yang sudah closed boleh disimpan
-permanen.
+Simpan cache per simbol+timeframe di tabel `price_snapshot`. Untuk efisiensi,
+simpan hanya 100-200 bar terakhir agar database tetap ramping.
+Invalidasi cache otomatis dilakukan dengan mengecek timestamp data terakhir.
 
 ## 4. Stock Universe
 

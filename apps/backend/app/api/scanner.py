@@ -40,11 +40,14 @@ async def get_results(
     """
     try:
         if latest_only:
-            query = supabase.table("divergence_signal").select("*").order("created_at", desc=True).limit(500)
+            # Optimal query: filter in DB as much as possible
+            query = supabase.table("divergence_signal").select("*")
             if market: query = query.eq("market", market.lower())
             if timeframe: query = query.eq("timeframe", timeframe)
             
-            response = query.execute()
+            # We still need some local logic to get the ABSOLUTE latest per symbol/method
+            # unless we use a complex RPC, which we want to avoid for now.
+            response = query.order("created_at", desc=True).limit(200).execute()
             data = response.data
             
             unique_results = {}
