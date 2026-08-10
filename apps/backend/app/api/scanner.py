@@ -17,8 +17,6 @@ async def run_scanner(market: str = "idx", timeframe: str = "1d"):
     """
     try:
         results = await engine.run_scan(market, timeframe)
-        # Results are already SetupResult objects, which might need conversion to dict if not Pydantic
-        # SetupResult is a dataclass, so we can use asdict or it might be serializable by FastAPI if we are lucky
         return {
             "message": "Scan completed", 
             "count": len(results), 
@@ -34,17 +32,15 @@ async def get_results(
     symbol: Optional[str] = Query(None), 
     timeframe: Optional[str] = Query(None),
     limit: int = Query(50, gt=0, le=100),
-    sort_by: str = "timestamp",
+    sort_by: str = "created_at",
     latest_only: bool = False
 ):
     """
-    Fetch scan results. If latest_only is True, returns only the most recent result per symbol.
+    Fetch scan results. If latest_only is True, returns only the most recent result per symbol/method.
     """
     try:
         if latest_only:
-            # Simple approach: fetch more and filter in Python to ensure unique symbols
-            # Better approach would be raw SQL with DISTINCT ON, but supabase-py is limited
-            query = supabase.table("scanner_results").select("*").order("timestamp", desc=True).limit(500)
+            query = supabase.table("divergence_signal").select("*").order("created_at", desc=True).limit(500)
             if market: query = query.eq("market", market.lower())
             if timeframe: query = query.eq("timeframe", timeframe)
             
@@ -53,25 +49,23 @@ async def get_results(
             
             unique_results = {}
             for item in data:
-                # Normalize symbol (remove .JK if present) for deduplication
-                base_symbol = item['symbol'].split('.')[0].upper()
-                key = f"{base_symbol}_{item['timeframe']}"
+                # Key based on symbol, method and timeframe
+                key = f"{item['symbol']}_{item['method']}_{item['timeframe']}"
                 if key not in unique_results:
                     unique_results[key] = item
             
             final_data = list(unique_results.values())
-            # Sort final data if needed
             if sort_by == "score":
-                final_data.sort(key=lambda x: x['score'], reverse=True)
+                final_data.sort(key=lambda x: x['score'] or 0, reverse=True)
             
             return final_data[:limit]
 
-        order_col = "score" if sort_by == "score" else "timestamp"
-        query = supabase.table("scanner_results").select("*").order(order_col, desc=True).limit(limit)
+        order_col = "score" if sort_by == "score" else "created_at"
+        query = supabase.table("divergence_signal").select("*").order(order_col, desc=True).limit(limit)
         
         if market:
             query = query.eq("market", market.lower())
-            
+
         if symbol:
             query = query.eq("symbol", symbol.upper())
             
@@ -81,4 +75,5 @@ async def get_results(
         response = query.execute()
         return response.data
     except Exception as e:
+        print(f"API ERROR (get_results): {e}")
         raise HTTPException(status_code=500, detail=str(e))

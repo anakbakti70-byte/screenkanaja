@@ -1,41 +1,18 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
-from fastapi.security import OAuth2PasswordBearer
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from jose import JWTError, jwt
 from app.core.database import supabase
-from app.core.config import settings
 from passlib.context import CryptContext
+from .auth import get_current_user
 import bcrypt
 import os
 import shutil
 
 router = APIRouter()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=401,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-        
-    response = supabase.table("users").select("*").eq("username", username).execute()
-    user = response.data[0] if response.data else None
-    if user is None:
-        raise credentials_exception
-    return user
 
 class UserSettingsUpdate(BaseModel):
     username: str | None = None
@@ -55,6 +32,7 @@ async def read_users_me(current_user: dict = Depends(get_current_user)):
         "id": current_user["id"],
         "username": username,
         "role": current_user["role"],
+        "balance": current_user.get("balance", 0),
         "avatar_url": avatar_url
     }
     

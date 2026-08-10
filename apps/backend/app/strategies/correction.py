@@ -1,84 +1,67 @@
 import pandas as pd
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any
 from app.strategies.base import BaseStrategy, SetupResult
+from app.fibonacci.retracement import calculate_fib_levels
+from app.fibonacci.extension import calculate_fib_extension
+from app.confirmation.candle import check_bullish_candle
 
 class CorrectionStrategy(BaseStrategy):
     def __init__(self, config: Optional[Dict] = None):
-        super().__init__("Correction", config)
-        self.retracement_zones = self.config.get("fibonacci", {}).get("retracement_zones", [[0.382, 0.618]])
+        super().__init__("Correction (ABC)", config)
 
     def evaluate(self, df: pd.DataFrame, pivots: pd.DataFrame, indicators: Dict[str, pd.Series]) -> Optional[SetupResult]:
         """
-        Implements Fibonacci-based Correction strategy.
-        1. Identifies a recent strong move (Swing Low to Swing High).
-        2. Checks if current price is in the Fibonacci retracement zone.
+        Implements Correction (ABC) according to final.md §4.
         """
-        if len(pivots) < 2:
-            return None
-
-        # Look for the last High and the Low before it
-        last_pivots = pivots.tail(3)
-        if len(last_pivots) < 2:
-            return None
-            
-        # We need a Low followed by a High
-        high_idx = -1
-        low_idx = -1
+        if len(pivots) < 3: return None
         
-        for i in range(len(last_pivots)-1, 0, -1):
-            if last_pivots.iloc[i]['type'] == 1: # High
-                high_idx = i
-                # Look for the Low before this High
-                for j in range(i-1, -1, -1):
-                    if last_pivots.iloc[j]['type'] == -1: # Low
-                        low_idx = j
-                        break
-                if low_idx != -1:
-                    break
-        
-        if high_idx == -1 or low_idx == -1:
-            return None
+        lows = pivots[pivots['type'] == -1]
+        highs = pivots[pivots['type'] == 1]
+        if len(lows) < 2 or len(highs) < 1: return None
             
-        swing_low = last_pivots.iloc[low_idx]['price']
-        swing_high = last_pivots.iloc[high_idx]['price']
+        # A = Puncak setelah TP (High), B = Low koreksi saat ini, C = Titik Tunggu
+        bullish_div_low = lows.iloc[-2]
+        tp_high = highs.iloc[-1]
+        
+        # Rule §4.2: Zona Tunggu Koreksi (Fib 0.6 / 0.7) from Bullish Div Low -> TP High
+        wait_zone = calculate_fib_levels(bullish_div_low['price'], tp_high['price'], [0.6, 0.7])
         current_price = df['Close'].iloc[-1]
-        
-        if swing_high <= swing_low:
-            return None
-            
-        diff = swing_high - swing_low
-        
-        # Check if price is in any of the retracement zones
-        in_zone = False
-        target_zone = None
-        for zone in self.retracement_zones:
-            lower_bound = swing_high - (zone[1] * diff)
-            upper_bound = swing_high - (zone[0] * diff)
-            
-            if lower_bound <= current_price <= upper_bound:
-                in_zone = True
-                target_zone = zone
-                break
-        
-        if not in_zone:
-            return None
 
-        # Calculate Extensions for TP
-        extensions = self.config.get("fibonacci", {}).get("extension_targets", [1.0, 1.618])
-        tp_levels = [swing_low + (ext * diff) for ext in extensions]
+        in_zone = wait_zone[0.7] <= current_price <= wait_zone[0.6]
+        if not in_zone: return None
+
+        is_ready = check_bullish_candle(df)
+        status = "READY" if is_ready else "WAIT_CONFIRMATION"
+
+        # Rule §4.4: TP Extension 1.618
+        current_low = df['Low'].iloc[-1]
+        tp_extension = calculate_fib_extension(bullish_div_low['price'], tp_high['price'], current_low, [1.618])
+        tp_price = tp_extension.get(1.618)
+
+        # Rule §4.3: SL = low bullish divergence SEBELUMNYA
+        sl_price = bullish_div_low['price']
+
+        risk = abs(current_price - sl_price)
+        reward = abs(tp_price - current_price)
+        rr = reward / risk if risk > 0 else 0
+
+        plot_data = {
+            "pivots": {
+                "Low_A": {"idx": int(bullish_div_low['index']), "price": float(bullish_div_low['price'])},
+                "High_B": {"idx": int(tp_high['index']), "price": float(tp_high['price'])}
+            },
+            "fib_levels": { "wait_zone": wait_zone, "tp_extension": tp_price }
+        }
 
         return SetupResult(
-            status="WAIT_CONFIRMATION",
+            status=status,
             strategy_name=self.name,
             symbol=df.attrs.get('symbol', 'UNKNOWN'),
             timeframe=df.attrs.get('timeframe', 'UNKNOWN'),
-            entry_price=current_price,
-            stop_loss=swing_low,
-            take_profit=tp_levels[0] if tp_levels else None,
-            metadata={
-                "retracement_zone": target_zone,
-                "swing_low": swing_low,
-                "swing_high": swing_high,
-                "tp_levels": tp_levels
-            }
+            entry_price=float(current_price),
+            stop_loss=float(sl_price),
+            take_profit=float(tp_price),
+            risk_reward=float(rr),
+            score=float(rr * 10),
+            metadata=plot_data
         )

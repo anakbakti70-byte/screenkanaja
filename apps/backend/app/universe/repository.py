@@ -5,7 +5,7 @@ from datetime import datetime
 
 class UniverseRepository:
     def __init__(self):
-        self.table = "stocks"
+        self.table = "stock_master"
 
     def get_all(self) -> List[Dict[str, Any]]:
         """Fetch all stocks from Supabase."""
@@ -13,8 +13,8 @@ class UniverseRepository:
         return response.data
 
     def get_active(self) -> List[Dict[str, Any]]:
-        """Fetch only active stocks."""
-        response = supabase.table(self.table).select("*").eq("is_active", True).execute()
+        """Fetch only active stocks with price <= 1000."""
+        response = supabase.table(self.table).select("*").eq("is_active", True).lte("last_price", 1000).execute()
         return response.data
 
     def upsert_stocks(self, stocks: List[Dict[str, Any]]):

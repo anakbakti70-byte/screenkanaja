@@ -1,6 +1,6 @@
-fastapi<0.110.0
+fastapi>=0.100.0
 uvicorn>=0.20.0
-pandas>=2.0.0,<2.1.0
+pandas>=2.0.0
 yfinance>=0.2.40
 pyyaml>=6.0
 sqlalchemy>=2.0.0
@@ -11,11 +11,8 @@ passlib[bcrypt]>=1.7.4
 bcrypt==4.0.1
 python-multipart>=0.0.6
 python-dotenv>=1.0.0
-supabase>=1.0.0,<2.0.0
-websockets>=13.0
-# pandas-ta
+supabase>=2.0.0
+pandas-ta>=0.3.14b0
 redis>=5.0.0
 pyarrow>=12.0.0
 requests>=2.31.0
-groq>=0.5.0
-psycopg2-binary>=2.9.0

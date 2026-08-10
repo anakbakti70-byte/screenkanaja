@@ -19,7 +19,6 @@ class IDXSource:
     def fetch_all_stocks(self) -> List[Dict[str, Any]]:
         """
         Combines data from Official IDX API and dynamic mirror fallbacks.
-        No hardcoded lists.
         """
         all_stocks = {}
 
@@ -44,7 +43,7 @@ class IDXSource:
         except Exception as e:
             logging.warning(f"IDX API failed: {e}")
 
-        # 2. Mirror Discovery (Stable backup for Indonesian stocks)
+        # 2. Mirror Discovery
         mirrors = [
             "https://web-idn-ipo-data.netlify.app/data/stocks.json",
             "https://raw.githubusercontent.com/wildangunawan/Dataset-Saham-IDX/master/info.json"
@@ -57,13 +56,11 @@ class IDXSource:
                 if resp.status_code == 200:
                     data = resp.json()
                     if isinstance(data, list) and len(data) > 0:
-                        # Handle if data is a list of strings (tickers)
                         if isinstance(data[0], str):
                             for sym in data:
                                 if len(sym) >= 4:
                                     s_up = sym.strip().upper()
                                     all_stocks[s_up] = {"symbol": s_up, "company_name": f"{s_up} Tbk", "listing_date": None}
-                        # Handle if data is a list of objects
                         elif isinstance(data[0], dict):
                             for item in data:
                                 sym = (item.get('Kode') or item.get('symbol') or item.get('ticker', '')).strip().upper()
@@ -80,12 +77,11 @@ class IDXSource:
                                 all_stocks[k] = {"symbol": k, "company_name": name, "listing_date": None}
                                 
                     if len(all_stocks) > 100:
-                        logging.info(f"Successfully expanded to {len(all_stocks)} stocks via Mirror.")
                         break
             except Exception as e:
                 logging.warning(f"Mirror failed ({url}): {e}")
 
-        # 3. E-IPO Scraping (Specifically for upcoming/new)
+        # 3. E-IPO Scraping
         try:
             resp = requests.get("https://e-ipo.co.id/id/ipo/index", headers=self.headers, timeout=10)
             if resp.status_code == 200:

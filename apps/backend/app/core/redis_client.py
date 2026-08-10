@@ -21,12 +21,14 @@ class RedisClient:
                     port=REDIS_PORT,
                     db=REDIS_DB,
                     password=REDIS_PASSWORD,
-                    decode_responses=False
+                    decode_responses=False,
+                    socket_timeout=2  # Set a short timeout for the ping
                 )
                 # Test connection
                 cls._instance.client.ping()
-            except redis.ConnectionError:
-                print(f"Warning: Could not connect to Redis at {REDIS_HOST}:{REDIS_PORT}. Redis caching will be disabled.")
+                print(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
+            except Exception as e:
+                print(f"Warning: Could not connect to Redis at {REDIS_HOST}:{REDIS_PORT}. Error: {e}. Redis caching will be disabled.")
                 cls._instance.client = None
         return cls._instance
 

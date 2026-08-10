@@ -29,8 +29,11 @@ const Login: React.FC = () => {
       await login(response.data.access_token);
       navigate('/');
     } catch (err: any) {
+      console.error("Login Error:", err);
       if (err.response?.data?.detail) {
         setError(err.response.data.detail);
+      } else if (err.message) {
+        setError(`Connection Error: ${err.message}`);
       } else {
         setError('Connection error. Is the backend running?');
       }

@@ -2,15 +2,14 @@ import os
 import yfinance as yf
 import pandas as pd
 import pickle
-from datetime import datetime
+from datetime import datetime, timezone
 from .base import BaseDataProvider
 from ..core.redis_client import redis_client
+from ..core.database import supabase
 
 class YFinanceProvider(BaseDataProvider):
     def __init__(self, cache_dir=None, cache_expiry_intraday=300):
         if cache_dir is None:
-            # Default to data/cache in project root
-            # Assuming we run from project root or apps/backend
             self.cache_dir = os.path.join(os.getcwd(), "data", "cache")
         else:
             self.cache_dir = cache_dir
@@ -23,11 +22,6 @@ class YFinanceProvider(BaseDataProvider):
             except Exception as e:
                 print(f"Warning: Could not create cache directory {self.cache_dir}: {e}")
 
-    def _get_parquet_path(self, symbol, timeframe):
-        # Sanitize symbol for filename
-        safe_symbol = symbol.replace(".", "_").replace("^", "IDX_")
-        return os.path.join(self.cache_dir, f"{safe_symbol}_{timeframe}.parquet")
-
     def get_ohlcv(
         self, 
         symbol: str, 
@@ -36,89 +30,70 @@ class YFinanceProvider(BaseDataProvider):
         end: datetime = None,
         limit: int = None
     ) -> pd.DataFrame:
-        
-        # 1. Check Redis for Intraday (Timeframes < 1d)
-        # yfinance timeframe strings: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
-        is_intraday = timeframe in ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h"]
-        
-        # Create a unique cache key for Redis
-        redis_key = f"ohlcv:{symbol}:{timeframe}:{start}:{end}:{limit}"
-        
-        if is_intraday and redis_client:
-            try:
-                cached_redis = redis_client.get(redis_key)
-                if cached_redis:
-                    return pickle.loads(cached_redis)
-            except Exception as e:
-                print(f"Redis error: {e}")
 
-        # 2. Check Parquet for Historical/Daily
-        parquet_path = self._get_parquet_path(symbol, timeframe)
-        df_cached = pd.DataFrame()
+        clean_symbol = symbol.replace(".JK", "").upper()
         
-        if os.path.exists(parquet_path):
-            try:
-                df_cached = pd.read_parquet(parquet_path)
-            except Exception as e:
-                print(f"Parquet read error: {e}")
-        
-        # 3. Fetch from yfinance
-        ticker = yf.Ticker(symbol)
-        
-        yf_start = start.strftime('%Y-%m-%d') if isinstance(start, datetime) else start
-        yf_end = end.strftime('%Y-%m-%d') if isinstance(end, datetime) else end
-        
-        # If we have cached data and it's daily, we might only need to fetch recent data
-        # For MVP, we fetch and merge
+        # 1. Try fetching from Supabase 'price_snapshot' first
         try:
-            df = ticker.history(
-                start=yf_start,
-                end=yf_end,
-                interval=timeframe,
-                period="max" if not yf_start else None
-            )
+            if supabase:
+                query = supabase.table("price_snapshot").select("*").eq("symbol", clean_symbol).eq("timeframe", timeframe).order("ts", desc=True)
+                if limit: query = query.limit(limit)
+
+                resp = query.execute()
+                if resp.data and len(resp.data) > 20:
+                    df_db = pd.DataFrame(resp.data)
+                    df_db['ts'] = pd.to_datetime(df_db['ts'])
+                    df_db = df_db.rename(columns={
+                        'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+                    })
+                    df_db = df_db.set_index('ts').sort_index()
+                    # Return if we have enough recent data (last 24h)
+                    last_ts = df_db.index[-1]
+                    if (datetime.now(timezone.utc) - last_ts.to_pydatetime()).total_seconds() < 3600:
+                        return df_db
+        except Exception as e:
+            print(f"DB Fetch Error for {symbol}: {e}")
+
+        # 2. Fetch from yfinance if DB is empty or stale
+        ticker = yf.Ticker(symbol)
+        try:
+            df = ticker.history(period="1y" if not limit or limit > 100 else "1mo", interval=timeframe)
+            if not df.empty:
+                # Cache to DB in background (simplified here)
+                self._save_to_db(clean_symbol, timeframe, df)
+                if limit: return df.tail(limit)
+                return df
         except Exception as e:
             print(f"yfinance fetch error for {symbol}: {e}")
-            return df_cached # Return cached if fetch fails
 
-        if df.empty:
-            return df_cached
+        return pd.DataFrame()
 
-        # 4. Merge and Cache
-        if not df_cached.empty:
-            # Combine and remove duplicates based on index (Datetime)
-            df = pd.concat([df_cached, df])
-            df = df[~df.index.duplicated(keep='last')].sort_index()
+    def _save_to_db(self, symbol, timeframe, df):
+        if not supabase or df.empty: return
         
-        # Save to Parquet
-        try:
-            df.to_parquet(parquet_path)
-        except Exception as e:
-            print(f"Parquet write error: {e}")
-        
-        # Cache to Redis if intraday
-        if is_intraday and redis_client:
-            try:
-                redis_client.setex(redis_key, self.cache_expiry_intraday, pickle.dumps(df))
-            except Exception as e:
-                print(f"Redis write error: {e}")
-
-        if limit:
-            return df.tail(limit)
+        data = []
+        # Take last 100 bars to avoid heavy payload
+        df_save = df.tail(100)
+        for ts, row in df_save.iterrows():
+            data.append({
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "ts": ts.isoformat(),
+                "open": float(row['Open']),
+                "high": float(row['High']),
+                "low": float(row['Low']),
+                "close": float(row['Close']),
+                "volume": int(row['Volume'])
+            })
             
-        return df
+        try:
+            supabase.table("price_snapshot").upsert(data, on_conflict="symbol,timeframe,ts").execute()
+        except:
+            pass
 
     def get_last_price(self, symbol: str) -> float:
         ticker = yf.Ticker(symbol)
         try:
-            # Try to get fast_info if available
             return float(ticker.fast_info['lastPrice'])
         except:
-            try:
-                # Fallback to history
-                df = ticker.history(period="1d")
-                if not df.empty:
-                    return float(df['Close'].iloc[-1])
-            except:
-                pass
-        return 0.0
+            return 0.0
