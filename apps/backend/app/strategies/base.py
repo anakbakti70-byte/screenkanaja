@@ -12,6 +12,7 @@ class SetupResult:
     entry_price: Optional[float] = None
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
+    tp_far: Optional[float] = None
     risk_reward: Optional[float] = None
     score: float = 0.0
     component_scores: Dict[str, float] = field(default_factory=dict)

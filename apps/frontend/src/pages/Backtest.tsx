@@ -324,18 +324,20 @@ const Backtest: React.FC = () => {
                                 </div>
 
                                 {/* Performance Grid */}
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                                     {[
                                         { label: 'Net Profit', value: `Rp ${results.metrics.net_profit.toLocaleString()}`, sub: 'PROFIT REALIZED', color: results.metrics.net_profit >= 0 ? 'text-emerald-500' : 'text-red-500', icon: TrendingUp },
                                         { label: 'Win Rate', value: results.metrics.win_rate, sub: `${results.metrics.wins} WINS / ${results.metrics.losses} LOSS`, color: 'text-blue-500', icon: CheckCircle2 },
-                                        { label: 'Trades', value: results.metrics.total_trades, sub: 'SAMPLE SIZE', color: 'text-purple-500', icon: Activity },
-                                        { label: 'Efficiency', value: results.metrics.efficiency || '0.0%', sub: 'FORMULA HIT RATE', color: 'text-amber-500', icon: ShieldAlert },
+                                        { label: 'Expectancy', value: results.metrics.expectancy, sub: 'R PER TRADE', color: 'text-purple-500', icon: Activity },
+                                        { label: 'Profit Factor', value: results.metrics.profit_factor, sub: 'GROSS WIN/LOSS', color: 'text-amber-500', icon: ShieldAlert },
+                                        { label: 'Max DD', value: results.metrics.max_drawdown, sub: 'MAX DRAWDOWN', color: 'text-red-400', icon: Target },
+                                        { label: 'Trades', value: results.metrics.total_trades, sub: 'SAMPLE SIZE', color: 'text-slate-400', icon: BarChart },
                                     ].map((stat, i) => (
                                         <div key={i} className="bg-slate-900 border border-slate-800 p-6 rounded-[2rem] shadow-xl hover:scale-[1.02] transition-all">
                                             <div className={`p-2 w-fit rounded-xl bg-slate-950 border border-slate-800 mb-4 ${stat.color}`}>
                                                 <stat.icon className="w-5 h-5" />
                                             </div>
-                                            <div className={`text-2xl font-black ${stat.color} mb-1 tracking-tighter`}>{stat.value}</div>
+                                            <div className={`text-xl font-black ${stat.color} mb-1 tracking-tighter`}>{stat.value}</div>
                                             <div className="text-[9px] text-slate-500 font-black uppercase tracking-widest">{stat.label}</div>
                                             <div className="text-[8px] text-slate-700 font-black mt-3 tracking-tighter">{stat.sub}</div>
                                         </div>

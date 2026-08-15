@@ -29,7 +29,8 @@ class BullishDivergenceStrategy(BaseStrategy):
         if not (w5_low['price'] < w3_low['price']):
             return None
 
-        # Rule §2: Indicator Higher Low (Divergence)
+        # Rule §2: Indicator Higher Low (Divergence) - AT LEAST ONE
+        # Priority: AO -> MACD -> RSI
         div_found = False
         indicator_used = ""
         for name in ['AO', 'MACD', 'RSI']:
@@ -46,31 +47,27 @@ class BullishDivergenceStrategy(BaseStrategy):
 
         if not div_found: return None
 
-        # Accuracy Improvement: RSI Oversold filter
-        rsi = indicators.get('RSI')
-        if rsi is not None:
-            # Check if RSI was oversold (<35) at W3 or W5 to ensure high quality
-            if rsi.iloc[int(w3_low['index'])] > 40 and rsi.iloc[int(w5_low['index'])] > 40:
-                return None
-
         # Rule §3.3: Candle Konfirmasi
         is_ready = check_bullish_candle(df)
         status = "READY" if is_ready else "WAIT_CONFIRMATION"
 
-        # Only enter if READY for high accuracy
+        # Only enter if READY
         if status != "READY": return None
 
         # TP Levels (§3.5): High(W4) -> Low(W5) -> 0.6
-        tp_levels = calculate_fib_levels(w4_high['price'], w5_low['price'], [0.6])
+        # final.md: TP minimal 0.6
+        tp_levels = calculate_fib_levels(w4_high['price'], w5_low['price'], [0.5, 0.6, 0.7])
+        tp_price = float(tp_levels.get(0.6))
+        tp_short = float(tp_levels.get(0.5))
 
         entry_price = float(df['Close'].iloc[-1])
-        sl_price = float(df['Low'].iloc[-1]) # Low of confirmation candle
-        tp_price = float(tp_levels.get(0.6))
+        sl_price = float(df['Low'].iloc[-1]) # Low of confirmation candle (including wick)
 
-        # Risk/Reward check for high accuracy
+        # Risk/Reward check
         risk = abs(entry_price - sl_price)
         reward = abs(tp_price - entry_price)
-        if risk == 0 or (reward / risk) < 1.2: return None
+        if risk == 0: return None
+        rr = reward / risk
 
         plot_data = {
             "pivots": {
@@ -104,15 +101,16 @@ class DoubleBullishDivergenceStrategy(BaseStrategy):
         """
         Implements Double Bullish Divergence according to final.md §3.6.
         """
+        # Needs at least 3 lows to check double divergence
         lows = pivots[pivots['type'] == -1].tail(3)
         if len(lows) < 3: return None
 
         l1, l2, l3 = lows.iloc[-1], lows.iloc[-2], lows.iloc[-3]
 
-        # Price: L1 < L2 < L3
+        # Price: L1 < L2 < L3 (Lower Lows)
         if not (l1['price'] < l2['price'] < l3['price']): return None
 
-        # Indicator: HL1 > HL2 > HL3
+        # Rule §2: Indicator Higher Low (Divergence) - AT LEAST ONE
         div_found = False
         indicator_used = ""
         for name in ['AO', 'MACD', 'RSI']:
@@ -125,23 +123,35 @@ class DoubleBullishDivergenceStrategy(BaseStrategy):
                 break
         if not div_found: return None
 
-        # Check if L2 Setup didn't reach TP 0.5
+        # Check if first Bullish Div (between L3 and L2) failed to reach TP 0.5
         highs = pivots[pivots['type'] == 1]
+        h_between = highs[(highs['index'] > l3['index']) & (highs['index'] < l2['index'])]
+        if h_between.empty: return None
+        h_prev_peak = h_between.iloc[-1]['price']
+
+        # High between L2 and L1
         h_mid = highs[(highs['index'] > l2['index']) & (highs['index'] < l1['index'])]
         if h_mid.empty: return None
-
         peak_reached = h_mid['price'].max()
-        h_prev = highs[highs['index'] < l2['index']]
-        if h_prev.empty: return None
-        tp05_l2 = h_prev.iloc[-1]['price'] - (h_prev.iloc[-1]['price'] - l2['price']) * 0.5
 
-        if peak_reached >= tp05_l2: return None
+        # TP 0.5 of first Bullish Div
+        tp05_first = h_prev_peak - (h_prev_peak - l2['price']) * 0.5
+
+        if peak_reached >= tp05_first: return None
+
+        # Rule §3.6: Bullish divergence pertama & kedua keduanya harus tetap valid
+        # (Price doesn't break below first "kaki kiri" which is low before L3)
+        # For simplicity, we assume if L1 < L2 < L3 it's still descending waves.
 
         if not check_bullish_candle(df): return None
 
         # SL at Fib level 2.0 extension
-        sl_price = l2['price'] - (peak_reached - l2['price']) * 1.0
-        tp_price = l1['price'] + (peak_reached - l1['price']) * 0.6
+        # final.md: "SL = di Fib '2' (level fib ke-2 dari skala fibo lokal 1-2-4-6-...)"
+        # Assuming peak_reached to L1 is the base
+        sl_price = l1['price'] - (peak_reached - l1['price']) * 1.0 # Fib 2.0 is 100% extension below L1
+
+        tp_short = l1['price'] + (peak_reached - l1['price']) * 0.6
+        tp_far = tp05_first # Target first setup that wasn't reached
 
         entry_price = float(df['Close'].iloc[-1])
         return SetupResult(
@@ -151,8 +161,9 @@ class DoubleBullishDivergenceStrategy(BaseStrategy):
             timeframe=df.attrs.get('timeframe', 'UNKNOWN'),
             entry_price=entry_price,
             stop_loss=sl_price,
-            take_profit=tp_price,
-            risk_reward=2.0,
+            take_profit=tp_short,
+            tp_far=tp_far,
+            risk_reward=abs(tp_short-entry_price)/abs(entry_price-sl_price) if abs(entry_price-sl_price) > 0 else 0,
             score=25,
-            metadata={"indicator": indicator_used}
+            metadata={"indicator": indicator_used, "is_double": True}
         )

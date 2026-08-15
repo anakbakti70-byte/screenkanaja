@@ -16,10 +16,14 @@ class YFinanceProvider(BaseDataProvider):
         end: datetime = None,
         limit: int = None
     ) -> pd.DataFrame:
-
+        """
+        Priority:
+        1. DB Cache (ohlcv_cache)
+        2. Yahoo Finance (and then save to DB)
+        """
         clean_symbol = symbol.replace(".JK", "").upper()
         
-        # 1. Try fetching from Supabase 'ohlcv_cache' first
+        # 1. Fetch from DB
         try:
             if supabase:
                 query = supabase.table("ohlcv_cache") \
@@ -31,10 +35,10 @@ class YFinanceProvider(BaseDataProvider):
                 if limit:
                     query = query.limit(limit)
                 else:
-                    query = query.limit(200) # Default cache limit for efficiency
+                    query = query.limit(1000) # Increased limit for backtesting
 
                 resp = query.execute()
-                if resp.data and len(resp.data) > 10:
+                if resp.data:
                     df_db = pd.DataFrame(resp.data)
                     df_db['ts'] = pd.to_datetime(df_db['ts'])
                     df_db = df_db.rename(columns={
@@ -42,22 +46,27 @@ class YFinanceProvider(BaseDataProvider):
                     })
                     df_db = df_db.set_index('ts').sort_index()
 
-                    # Check if data is fresh (last candle < 1h old for 1d)
-                    last_ts = df_db.index[-1]
-                    if (datetime.now(timezone.utc) - last_ts.to_pydatetime()).total_seconds() < 3600:
-                        return df_db
+                    # If we have enough data and it's not a live request, return it
+                    if len(df_db) >= (limit or 100):
+                        # For 1d timeframe, check if we need today's update
+                        if timeframe == "1d":
+                            last_ts = df_db.index[-1].date()
+                            today = datetime.now(timezone.utc).date()
+                            if last_ts >= today:
+                                return df_db
+                        else:
+                            return df_db
         except Exception as e:
-            print(f"Cache Fetch Error for {symbol}: {e}")
+            print(f"DB Fetch Error for {symbol}: {e}")
 
-        # 2. Fetch from yfinance if Cache is empty or stale
-        ticker = yf.Ticker(symbol)
+        # 2. Fetch from yfinance
+        print(f"Enriching {clean_symbol} from Yahoo Finance...")
+        ticker = yf.Ticker(f"{clean_symbol}.JK")
         try:
-            # For 1d, fetch 1y. For intraday, fetch 1mo.
-            period = "1y" if timeframe == "1d" else "1mo"
+            period = "2y" if timeframe == "1d" else "1mo"
             df = ticker.history(period=period, interval=timeframe)
 
             if not df.empty:
-                # Cache to DB and prune old data
                 self._save_to_cache(clean_symbol, timeframe, df)
                 if limit: return df.tail(limit)
                 return df
@@ -69,10 +78,11 @@ class YFinanceProvider(BaseDataProvider):
     def _save_to_cache(self, symbol, timeframe, df):
         if not supabase or df.empty: return
 
-        # Take last 200 bars to keep DB lean (Standard & Efficient)
-        df_save = df.tail(200)
         data = []
-        for ts, row in df_save.iterrows():
+        for ts, row in df.iterrows():
+            # Handle possible NaNs from yfinance
+            if pd.isna(row['Close']): continue
+
             data.append({
                 "symbol": symbol,
                 "timeframe": timeframe,
@@ -85,11 +95,13 @@ class YFinanceProvider(BaseDataProvider):
             })
 
         try:
-            # UPSERT to dedicated cache table
-            supabase.table("ohlcv_cache").upsert(data, on_conflict="symbol,timeframe,ts").execute()
-
-            # Optional: Pruning logic could be here, but limiting upsert to 200 is usually enough
-            # unless we want to delete bars older than 200 explicitly.
+            # Upsert in chunks to avoid request size limits
+            chunk_size = 100
+            for i in range(0, len(data), chunk_size):
+                supabase.table("ohlcv_cache").upsert(
+                    data[i:i+chunk_size],
+                    on_conflict="symbol,timeframe,ts"
+                ).execute()
         except Exception as e:
             print(f"Error saving cache for {symbol}: {e}")
 

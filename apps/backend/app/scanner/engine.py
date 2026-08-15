@@ -36,9 +36,14 @@ class ScannerEngine:
 
     async def run_scan(self, market: str = "idx", timeframe: str = "1d"):
         try:
+            # 1. Update Market Regime
+            from app.market_structure.regime import MarketRegimeDetector
+            regime_detector = MarketRegimeDetector()
+            await regime_detector.update_market_regime()
+
             tickers_map = self._discover_tickers_map(market)
         except Exception as e:
-            print(f"DATABASE ERROR: Table 'stock_master' might be missing. {e}")
+            print(f"DATABASE ERROR: {e}")
             return []
 
         if not tickers_map:
@@ -115,7 +120,14 @@ class ScannerEngine:
             pivots = self.movement_classifier.label_abcde(pivots)
 
             ticker_results = []
+            from app.strategies.gating import is_strategy_allowed
+
             for strategy in self.strategies:
+                # GATING: Check if strategy is proven for this timeframe
+                # In production, we might want to cache this check
+                # allowed = await is_strategy_allowed(strategy.name, timeframe)
+                # if not allowed: continue
+
                 setup = strategy.evaluate(df, pivots, indicators)
                 if setup:
                     # AI Reasoning if READY
@@ -161,7 +173,7 @@ class ScannerEngine:
                 "entry_price": r.entry_price,
                 "stop_loss": r.stop_loss,
                 "tp_short": r.take_profit,
-                "tp_far": r.tp_far,
+                "tp_far": getattr(r, 'tp_far', None),
                 "risk_reward": r.risk_reward,
                 "indicator_used": r.metadata.get("indicator_used", "Unknown"),
                 "score": r.score,

@@ -1,64 +1,51 @@
 import pandas as pd
 import numpy as np
 
+def calculate_ao(df: pd.DataFrame, fast: int = 5, slow: int = 34) -> pd.Series:
+    """
+    Awesome Oscillator (AO) - Bill Williams Official Formula
+    Median Price = (High + Low) / 2
+    AO = SMA(Median Price, 5) - SMA(Median Price, 34)
+    """
+    if df.empty or 'High' not in df.columns or 'Low' not in df.columns:
+        return pd.Series(dtype='float64')
+
+    # 1. Hitung Median Price
+    median_price = (df['High'] + df['Low']) / 2
+
+    # 2. Hitung SMA 5 dan SMA 34 dari Median Price
+    sma5 = median_price.rolling(window=fast).mean()
+    sma34 = median_price.rolling(window=slow).mean()
+
+    # 3. AO adalah selisihnya
+    ao = sma5 - sma34
+    return ao
+
 def calculate_rsi(df: pd.DataFrame, length: int = 14) -> pd.Series:
-    """
-    Relative Strength Index (RSI) - Manual Implementation (Wilder's Smoothing)
-    """
     if df.empty or 'Close' not in df.columns:
-        return pd.Series()
-
+        return pd.Series(dtype='float64')
     delta = df['Close'].diff()
-    gain = delta.copy()
-    loss = delta.copy()
-    gain[gain < 0] = 0
-    loss[loss > 0] = 0
-
-    # Wilder's Smoothing
-    avg_gain = gain.ewm(alpha=1/length, min_periods=length, adjust=False).mean()
-    avg_loss = loss.abs().ewm(alpha=1/length, min_periods=length, adjust=False).mean()
-
-    rs = avg_gain / avg_loss
+    gain = (delta.where(delta > 0, 0)).ewm(alpha=1/length, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/length, adjust=False).mean()
+    rs = gain / loss
     return 100 - (100 / (1 + rs))
 
 def calculate_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
-    """
-    Moving Average Convergence Divergence (MACD) - Manual Implementation
-    """
     if df.empty or 'Close' not in df.columns:
         return pd.DataFrame()
-
-    close = df['Close']
-    fast_ema = close.ewm(span=fast, adjust=False).mean()
-    slow_ema = close.ewm(span=slow, adjust=False).mean()
-
-    macd_line = fast_ema - slow_ema
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    histogram = macd_line - signal_line
-
-    return pd.DataFrame({
-        f'MACD_{fast}_{slow}_{signal}': macd_line,
-        f'MACDh_{fast}_{slow}_{signal}': histogram,
-        f'MACDs_{fast}_{slow}_{signal}': signal_line
-    })
-
-def calculate_ao(df: pd.DataFrame, fast: int = 5, slow: int = 34) -> pd.Series:
-    """
-    Awesome Oscillator (AO) - Manual Implementation
-    """
-    if df.empty or 'High' not in df.columns or 'Low' not in df.columns:
-        return pd.Series()
-
-    median_price = (df['High'] + df['Low']) / 2
-    ao_series = median_price.rolling(window=fast).mean() - median_price.rolling(window=slow).mean()
-    return ao_series
+    exp1 = df['Close'].ewm(span=fast, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=slow, adjust=False).mean()
+    macd = exp1 - exp2
+    sig = macd.ewm(span=signal, adjust=False).mean()
+    hist = macd - sig
+    return pd.DataFrame({'macd': macd, 'signal': sig, 'hist': hist})
 
 def calculate_atr(df: pd.DataFrame, length: int = 14) -> pd.Series:
     """
-    Average True Range (ATR) - Manual Implementation
+    Average True Range (ATR)
     """
     if df.empty or 'High' not in df.columns or 'Low' not in df.columns or 'Close' not in df.columns:
-        return pd.Series()
+        return pd.Series(dtype='float64')
 
     high = df['High']
     low = df['Low']
@@ -70,5 +57,4 @@ def calculate_atr(df: pd.DataFrame, length: int = 14) -> pd.Series:
         (low - close_prev).abs()
     ], axis=1).max(axis=1)
 
-    # Wilder's Smoothing for ATR
     return tr.ewm(alpha=1/length, min_periods=length, adjust=False).mean()

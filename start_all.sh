@@ -3,56 +3,61 @@
 # Pastikan berada di root project
 PROJECT_ROOT=$(pwd)
 
-echo "🚀 Memulai Ekosistem Stock Scanner CTG..."
+echo "🚀 Memulai Ekosistem Stock Scanner CTG (3-Worker Optimized)..."
 
 # Kill ghost processes if any
 pkill -f "uvicorn app.main:app" 2>/dev/null
 pkill -f "vite" 2>/dev/null
 pkill -f "run_scanner.py" 2>/dev/null
+pkill -f "update_market_data.py" 2>/dev/null
+pkill -f "sync_universe.py" 2>/dev/null
+pkill -f "db_janitor.py" 2>/dev/null
 
-# Cleanup log files and local cache files
-rm -f "$PROJECT_ROOT/backend.log" "$PROJECT_ROOT/frontend.log"
+# Cleanup local cache files
 rm -rf "$PROJECT_ROOT/data/cache/"*.parquet
 rm -rf "$PROJECT_ROOT/apps/backend/data/cache/"*.parquet
-touch "$PROJECT_ROOT/backend.log" "$PROJECT_ROOT/frontend.log"
 
 # Load Virtual Environment
 source venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$PROJECT_ROOT/apps/backend
 
-# 1. Validasi & Migrasi Database (Otomatis Membuat Tabel Cache jika belum ada)
-echo "🔍 [1/4] Memeriksa & Menyiapkan Tabel Database (Supabase)..."
+# 1. Validasi & Migrasi Database
+echo "🔍 [1/5] Memeriksa & Menyiapkan Tabel Database (Supabase)..."
 python3 scripts/check_tables.py
 if [ $? -ne 0 ]; then
     echo "❌ Gagal menyiapkan database. Periksa koneksi Supabase Anda."
     exit 1
 fi
 
-# 2. Sinkronisasi Data Master (Initial Sync)
-echo "📊 [2/4] Sinkronisasi Data Saham IDX (Latar Belakang)..."
+# 2. WORKER 1: Discovery (Latar Belakang)
+echo "📊 [2/5] Worker 1: Discovery IDX Active (Latar Belakang)..."
 python3 scripts/sync_universe.py &
-SYNC_PID=$!
+WORKER1_PID=$!
 
-# 3. Jalankan Backend & Frontend secara Paralel
-echo "🔌 [3/4] Menyalakan Backend API & Frontend UI..."
+# 3. WORKER 2: Real-time Price Update
+echo "⚡ [3/5] Worker 2: Real-time Price Updater (Polling)..."
+python3 scripts/update_market_data.py &
+WORKER2_PID=$!
 
-# Backend - Unbuffered for real-time logging
+# 4. WORKER 3: DB Janitor (Maintenance)
+echo "🧹 [4/5] Worker 3: Database Janitor (Auto-clean)..."
+python3 scripts/db_janitor.py &
+WORKER3_PID=$!
+
+# 5. Jalankan Backend & Frontend
+echo "🔌 [5/5] Menyalakan Backend API & Frontend UI..."
+
+# Backend
 cd apps/backend
-PYTHONUNBUFFERED=1 PYTHONPATH=. uvicorn app.main:app --port 8000 --host 0.0.0.0 --log-level info >> "$PROJECT_ROOT/backend.log" 2>&1 &
+PYTHONUNBUFFERED=1 PYTHONPATH=. uvicorn app.main:app --port 8000 --host 0.0.0.0 --log-level info &
 BACKEND_PID=$!
-echo "   ✅ Backend berjalan di port 8000 (Log: backend.log)"
 
-# Frontend - Force clean install if needed and run
+# Frontend
 cd ../frontend
-echo "   📦 Verifikasi dependensi frontend..."
-npm install >> "$PROJECT_ROOT/frontend.log" 2>&1
-rm -rf node_modules/.vite
-npm run dev >> "$PROJECT_ROOT/frontend.log" 2>&1 &
+npm run dev &
 FRONTEND_PID=$!
-echo "   ✅ Frontend berjalan di port 3000 (Log: frontend.log)"
 
-# 4. Jalankan Scanner Strategi CTG
-echo "🔍 [4/4] Mengaktifkan Auto-Scanner Strategi Divergence..."
+# Jalankan Scanner Strategi CTG
 cd $PROJECT_ROOT
 (
     while true; do
@@ -61,19 +66,19 @@ cd $PROJECT_ROOT
         echo "--- SCAN END: Menunggu 15 Menit ---"
         sleep 900
     done
-) >> "$PROJECT_ROOT/backend.log" 2>&1 &
+) &
 SCANNER_PID=$!
 
 echo "-------------------------------------------------------"
-echo "🌟 SEMUA SISTEM AKTIF!"
-echo "📈 Akses Dashboard: http://localhost:3000"
-echo "🛠️  Backend API   : http://localhost:8000"
-echo "💡 Tekan Ctrl+C untuk mematikan semua layanan sekaligus."
+echo "🌟 SEMUA SISTEM AKTIF DENGAN 3 WORKER PARALEL!"
+echo "📈 Dashboard: http://localhost:3000"
+echo "🛠️  Backend  : http://localhost:8000"
+echo "💡 Log ditampilkan langsung di terminal ini."
 echo "-------------------------------------------------------"
 
 cleanup() {
-    echo -e "\n🛑 Menghentikan semua layanan..."
-    kill $SYNC_PID $BACKEND_PID $FRONTEND_PID $SCANNER_PID 2>/dev/null
+    echo -e "\n🛑 Menghentikan semua layanan & worker..."
+    kill $WORKER1_PID $WORKER2_PID $WORKER3_PID $BACKEND_PID $FRONTEND_PID $SCANNER_PID 2>/dev/null
     echo "👋 Sampai jumpa!"
     exit
 }

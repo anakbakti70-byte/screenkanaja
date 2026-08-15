@@ -1,60 +1,79 @@
 from fastapi import APIRouter, HTTPException, Query
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+import numpy as np
+import pandas as pd
 from app.core.database import supabase
-
 from app.providers.yfinance_provider import YFinanceProvider
+from app.indicators.ta import calculate_rsi, calculate_macd, calculate_ao
 
 router = APIRouter()
 provider = YFinanceProvider()
 
 @router.get("/{symbol}/candles")
 async def get_stock_candles(symbol: str, timeframe: str = "1d"):
+    """
+    Standardized Professional Candle API:
+    - 100% Yahoo Finance Alignment
+    - Unix Timestamp (seconds)
+    - Full OHLCV + AO + RSI
+    """
     try:
-        provider_symbol = f"{symbol.upper()}.JK" if ".JK" not in symbol.upper() else symbol.upper()
-        df = provider.get_ohlcv(provider_symbol, timeframe, limit=100)
+        clean_symbol = symbol.upper().replace(".JK", "")
+        yahoo_symbol = f"{clean_symbol}.JK"
+
+        # Fetch 150 bars for indicator stability
+        df = provider.get_ohlcv(yahoo_symbol, timeframe, limit=150)
+
         if df.empty:
-            raise HTTPException(status_code=404, detail="Candles not found")
+            raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
 
-        # Convert to list of dicts for frontend
+        # 1. Calculate Indicators (Bill Williams AO)
+        df['rsi_val'] = calculate_rsi(df)
+        df['ao_val'] = calculate_ao(df)
+
+        # 2. Normalize Data
         df = df.reset_index()
-        df.columns = [c.lower() for c in df.columns]
-        # Rename 'date' or 'datetime' to 'time'
-        if 'date' in df.columns: df = df.rename(columns={'date': 'time'})
-        if 'datetime' in df.columns: df = df.rename(columns={'datetime': 'time'})
+        time_col = next((c for c in df.columns if c.lower() in ['date', 'datetime', 'ts', 'index']), None)
 
-        return df.to_dict(orient='records')
+        candles = []
+        for _, row in df.iterrows():
+            if pd.isna(row['Close']): continue
+
+            # Use Unix Timestamp in Seconds (Professional Standard)
+            ts = int(row[time_col].timestamp())
+
+            candles.append({
+                "time": ts,
+                "open": float(row['Open']),
+                "high": float(row['High']),
+                "low": float(row['Low']),
+                "close": float(row['Close']),
+                "volume": int(row['Volume']),
+                "ao": None if pd.isna(row['ao_val']) else float(row['ao_val']),
+                "rsi": None if pd.isna(row['rsi_val']) else float(row['rsi_val'])
+            })
+
+        # 3. Professional Response Structure
+        return {
+            "symbol": clean_symbol,
+            "exchange": "IDX",
+            "timezone": "Asia/Jakarta",
+            "timeframe": timeframe,
+            "adjusted": True, # We use auto_adjust from yfinance
+            "candles": candles
+        }
+
     except Exception as e:
+        print(f"🔥 CANDLE API ERROR [{symbol}]: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/ipo")
-async def get_recent_ipos(limit: int = 5):
-    """
-    Fetches the most recent IPOs from the stock_master table.
-    """
-    try:
-        response = supabase.table("stock_master") \
-            .select("symbol, company_name, listing_date") \
-            .lte("last_price", 1000) \
-            .not_.is_("listing_date", "null") \
-            .order("listing_date", desc=True) \
-            .limit(limit) \
-            .execute()
-        return response.data
-    except Exception as e:
-        print(f"API ERROR (get_recent_ipos): {e}")
-        # Return empty list instead of 500 if table is not ready
-        return []
 
 @router.get("/")
 async def get_stocks(symbol: Optional[str] = None):
     try:
-        # Filter: Price <= 1000 and Active
         query = supabase.table("stock_master").select("*").lte("last_price", 1000).eq("is_active", True).order("symbol", desc=False)
         if symbol:
             query = query.ilike("symbol", f"%{symbol}%")
-        
-        response = query.limit(1000).execute()
+        response = query.execute()
         return response.data
-    except Exception as e:
-        print(f"API ERROR (get_stocks): {e}")
+    except:
         return []

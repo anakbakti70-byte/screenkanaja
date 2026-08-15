@@ -28,7 +28,7 @@ const Scanner: React.FC = () => {
     const [timeframe, setTimeframe] = useState('1d');
     const [search, setSearch] = useState('');
     const [selectedResult, setSelectedResult] = useState<ScanResult | null>(null);
-    const [candles, setCandles] = useState<any[]>([]);
+    const [chartData, setChartData] = useState<any>(null);
     const [candlesLoading, setCandlesLoading] = useState(false);
 
     const { results, loading } = useScannerAutoRefresh(token, market, timeframe);
@@ -59,7 +59,7 @@ const Scanner: React.FC = () => {
                         params: { timeframe },
                         headers: { Authorization: `Bearer ${token}` }
                     });
-                    setCandles(res.data);
+                    setChartData(res.data);
                 } catch (err) {
                     console.error("Failed to fetch candles", err);
                 } finally {
@@ -110,7 +110,7 @@ const Scanner: React.FC = () => {
                                         <Loader2 className="animate-spin text-blue-500 w-12 h-12" />
                                     </div>
                                 ) : (
-                                    <PatternChart data={candles} metadata={selectedResult} />
+                                    <PatternChart data={chartData} metadata={selectedResult} />
                                 )}
                                 <button
                                     onClick={() => setSelectedResult(null)}

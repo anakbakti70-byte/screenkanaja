@@ -61,12 +61,32 @@ export const StockChart: React.FC<StockChartProps> = ({ symbol, market = 'idx', 
                     "save_image": false,
                     "container_id": containerId,
                     "backgroundColor": theme === 'dark' ? "#0f172a" : "#ffffff",
-                    "gridColor": "rgba(30, 41, 59, 0.1)",
+                    "gridColor": "rgba(148, 163, 184, 0.15)",
                     "studies": [
                         "RSI@tv-basicstudies",
                         "MACD@tv-basicstudies",
                         "AwesomeOscillator@tv-basicstudies"
                     ],
+                    "studies_overrides": {
+                        "awesome oscillator.plot.color.0": "#000000",
+                        "awesome oscillator.plot.color.1": "#000000",
+                        "rsi.rsi.color": "#3b82f6",
+                        "rsi.rsi.linewidth": 2,
+                        "macd.macd.color": "#10b981",
+                        "macd.signal.color": "#ef4444"
+                    },
+                    "overrides": {
+                        "mainSeriesProperties.candleStyle.upColor": "#10b981",
+                        "mainSeriesProperties.candleStyle.downColor": "#ef4444",
+                        "mainSeriesProperties.candleStyle.drawWick": true,
+                        "mainSeriesProperties.candleStyle.drawBorder": true,
+                        "mainSeriesProperties.candleStyle.borderColor": "#1e293b",
+                        "mainSeriesProperties.candleStyle.borderUpColor": "#10b981",
+                        "mainSeriesProperties.candleStyle.borderDownColor": "#ef4444",
+                        "paneProperties.background": theme === 'dark' ? "#0f172a" : "#ffffff",
+                        "paneProperties.vertGridProperties.color": "rgba(148, 163, 184, 0.1)",
+                        "paneProperties.horzGridProperties.color": "rgba(148, 163, 184, 0.1)",
+                    }
                 });
             }
         };

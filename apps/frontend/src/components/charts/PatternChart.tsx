@@ -1,30 +1,17 @@
 import React, { useEffect, useRef } from 'react';
-import { createChart, ColorType, LineStyle, CandlestickData, LineData, IChartApi, ISeriesApi } from 'lightweight-charts';
+import { createChart, ColorType, LineStyle, CandlestickData, IChartApi, ISeriesApi } from 'lightweight-charts';
 
 interface PatternChartProps {
-    data: any[];
-    metadata?: any; // For Scanner (Single Signal)
-    trades?: any[];  // For Backtest (Multiple Trades)
-    colors?: {
-        backgroundColor?: string;
-        textColor?: string;
-    };
+    data: any; // Standard Professional API Object
+    metadata?: any;
 }
 
-export const PatternChart: React.FC<PatternChartProps> = (props) => {
-    const {
-        data,
-        metadata,
-        trades,
-        colors: {
-            backgroundColor = '#0f172a',
-            textColor = '#94a3b8',
-        } = {},
-    } = props;
-
+export const PatternChart: React.FC<PatternChartProps> = ({ data, metadata }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+    const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+    const aoSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
     useEffect(() => {
         if (!chartContainerRef.current) return;
@@ -33,143 +20,119 @@ export const PatternChart: React.FC<PatternChartProps> = (props) => {
         container.innerHTML = '';
 
         const chart = createChart(container, {
-            layout: {
-                background: { type: ColorType.Solid, color: backgroundColor },
-                textColor,
-            },
+            layout: { background: { type: ColorType.Solid, color: '#0f172a' }, textColor: '#94a3b8' },
             grid: {
-                vertLines: { color: 'rgba(30, 41, 59, 0.05)' },
-                horzLines: { color: 'rgba(30, 41, 59, 0.05)' },
+                vertLines: { color: 'rgba(51, 65, 85, 0.1)', style: LineStyle.Dotted },
+                horzLines: { color: 'rgba(51, 65, 85, 0.1)', style: LineStyle.Dotted },
             },
             width: container.clientWidth,
-            height: 500,
-            timeScale: {
-                timeVisible: true,
-                secondsVisible: false,
-                borderColor: '#1e293b',
-            },
-            rightPriceScale: {
-                borderColor: '#1e293b',
-            }
+            height: 600,
+            timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#1e293b' },
+            rightPriceScale: { borderColor: '#1e293b' },
         });
 
         chartRef.current = chart;
 
+        // 1. Candle Series
         const candlestickSeries = chart.addCandlestickSeries({
-            upColor: '#10b981',
-            downColor: '#ef4444',
-            borderVisible: false,
-            wickUpColor: '#10b981',
-            wickDownColor: '#ef4444',
+            upColor: '#10b981', downColor: '#ef4444', borderVisible: true,
+            wickUpColor: '#10b981', wickDownColor: '#ef4444', borderColor: '#1e293b'
         });
         candleSeriesRef.current = candlestickSeries;
 
-        const handleResize = () => {
-            if (chartRef.current) {
-                chartRef.current.applyOptions({ width: container.clientWidth });
-            }
-        };
+        // 2. Volume Series (Histogram)
+        const volumeSeries = chart.addHistogramSeries({
+            priceFormat: { type: 'volume' },
+            priceScaleId: 'volume-scale',
+        });
+        volumeSeriesRef.current = volumeSeries;
 
+        chart.priceScale('volume-scale').applyOptions({
+            scaleMargins: { top: 0.7, bottom: 0.1 }, // Put volume at the bottom 30%
+        });
+
+        // 3. Awesome Oscillator Series (Black Line)
+        const aoSeries = chart.addLineSeries({
+            color: '#000000', lineWidth: 2, title: 'AO', priceScaleId: 'ao-scale'
+        });
+        aoSeriesRef.current = aoSeries;
+
+        chart.priceScale('ao-scale').applyOptions({
+            scaleMargins: { top: 0.85, bottom: 0.02 }, // Put AO at the very bottom
+            borderVisible: false,
+        });
+
+        const handleResize = () => chart.applyOptions({ width: container.clientWidth });
         window.addEventListener('resize', handleResize);
 
         return () => {
             window.removeEventListener('resize', handleResize);
-            if (chartRef.current) {
-                chartRef.current.remove();
-                chartRef.current = null;
-            }
+            chart.remove();
         };
-    }, [backgroundColor, textColor]);
+    }, []);
 
     useEffect(() => {
-        if (!candleSeriesRef.current || !chartRef.current || !data || data.length === 0) return;
+        if (!candleSeriesRef.current || !volumeSeriesRef.current || !aoSeriesRef.current || !data || !data.candles) return;
 
-        // 1. Format and deduplicate candles
-        const formattedData: CandlestickData[] = data.map(item => ({
-            time: (new Date(item.time).getTime() / 1000) as any,
-            open: Number(item.open),
-            high: Number(item.high),
-            low: Number(item.low),
-            close: Number(item.close),
-        })).sort((a, b) => (a.time as number) - (b.time as number));
+        const candles = data.candles;
 
-        const uniqueData = formattedData.filter((val, idx, self) =>
-            idx === 0 || val.time !== self[idx - 1].time
-        );
+        // Format Candles
+        const formattedCandles = candles.map((c: any) => ({
+            time: c.time as any,
+            open: c.open, high: c.high, low: c.low, close: c.close
+        }));
 
-        candleSeriesRef.current.setData(uniqueData);
+        // Format Volume with Color (Follows Candle Direction)
+        const formattedVolume = candles.map((c: any) => ({
+            time: c.time as any,
+            value: c.volume,
+            color: c.close >= c.open ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)'
+        }));
 
-        const markers: any[] = [];
+        // Format AO
+        const formattedAO = candles
+            .filter((c: any) => c.ao !== null)
+            .map((c: any) => ({ time: c.time as any, value: c.ao }));
 
-        // 2. Mode SCANNER (Single Pattern)
-        if (metadata && metadata.pivots) {
-            Object.entries(metadata.pivots).forEach(([key, p]: [string, any]) => {
-                const targetTime = formattedData[p.idx]?.time;
-                if (targetTime) {
+        candleSeriesRef.current.setData(formattedCandles);
+        volumeSeriesRef.current.setData(formattedVolume);
+        aoSeriesRef.current.setData(formattedAO);
+
+        // Markers for Patterns
+        if (metadata && metadata.metadata && metadata.metadata.pivots) {
+            const markers: any[] = [];
+            Object.entries(metadata.metadata.pivots).forEach(([key, p]: [string, any]) => {
+                const targetCandle = candles.find((c: any, idx: number) => idx === p.idx);
+                if (targetCandle) {
                     markers.push({
-                        time: targetTime,
-                        position: 'belowBar',
-                        color: '#f59e0b',
-                        shape: 'arrowUp',
-                        text: key.toUpperCase().replace('_', ' '),
+                        time: targetCandle.time, position: 'belowBar',
+                        color: '#f59e0b', shape: 'arrowUp', text: key.toUpperCase()
                     });
                 }
             });
-
-            // Entry/SL/TP Lines
-            const levels = [
-                { price: metadata.entry_price, color: '#3b82f6', label: 'ENTRY' },
-                { price: metadata.stop_loss, color: '#ef4444', label: 'SL' },
-                { price: metadata.take_profit, color: '#10b981', label: 'TP' },
-            ];
-
-            levels.forEach(lvl => {
-                if (lvl.price && candleSeriesRef.current) {
-                    candleSeriesRef.current.createPriceLine({
-                        price: Number(lvl.price),
-                        color: lvl.color,
-                        lineWidth: 2,
-                        lineStyle: LineStyle.Dotted,
-                        axisLabelVisible: true,
-                        title: lvl.label,
-                    });
-                }
-            });
+            candleSeriesRef.current.setMarkers(markers);
         }
 
-        // 3. Mode BACKTEST (Multiple Trades)
-        if (trades && trades.length > 0) {
-            trades.forEach(trade => {
-                // Entry Marker
-                markers.push({
-                    time: new Date(trade.entry_ts).getTime() / 1000,
-                    position: 'belowBar',
-                    color: '#3b82f6',
-                    shape: 'arrowUp',
-                    text: 'BUY',
-                });
-                // Exit Marker
-                markers.push({
-                    time: new Date(trade.exit_ts).getTime() / 1000,
-                    position: 'aboveBar',
-                    color: trade.pnl >= 0 ? '#10b981' : '#ef4444',
-                    shape: 'arrowDown',
-                    text: trade.reason,
-                });
-            });
-        }
-
-        if (markers.length > 0) {
-            candleSeriesRef.current.setMarkers(markers.sort((a, b) => (a.time as number) - (b.time as number)));
-        }
-
-        chartRef.current.timeScale().fitContent();
-
-    }, [data, metadata, trades]);
+        chartRef.current?.timeScale().fitContent();
+    }, [data, metadata]);
 
     return (
-        <div className="w-full bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl relative min-h-[500px]">
+        <div className="w-full h-full relative group">
             <div ref={chartContainerRef} className="w-full h-full" />
+
+            {/* Info Overlays */}
+            <div className="absolute top-4 left-6 pointer-events-none z-10 space-y-2">
+                <div className="flex items-center gap-4 bg-slate-950/40 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/5">
+                    <div className="flex items-center gap-1.5">
+                        <div className="w-3 h-3 rounded bg-emerald-500/60" />
+                        <span className="text-[10px] font-black text-slate-300 uppercase">Volume</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                        <div className="w-3 h-0.5 bg-black" />
+                        <span className="text-[10px] font-black text-slate-300 uppercase">AO (Bill Williams)</span>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 };

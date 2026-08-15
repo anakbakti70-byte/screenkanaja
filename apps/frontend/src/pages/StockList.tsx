@@ -13,6 +13,8 @@ const StockList: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+    const [chartData, setChartData] = useState<any>(null);
+    const [chartLoading, setChartLoading] = useState(false);
 
     const fetchData = async () => {
         try {
@@ -34,6 +36,28 @@ const StockList: React.FC = () => {
             setLoading(false);
         }
     };
+
+    useEffect(() => {
+        if (selectedSymbol) {
+            const fetchChart = async () => {
+                setChartLoading(true);
+                try {
+                    const res = await axios.get(`/api/stocks/${selectedSymbol}/candles`, {
+                        params: { timeframe: '1d' },
+                        headers: { Authorization: `Bearer ${token}` }
+                    });
+                    setChartData(res.data);
+                } catch (err) {
+                    console.error(err);
+                } finally {
+                    setChartLoading(false);
+                }
+            };
+            fetchChart();
+        } else {
+            setChartData(null);
+        }
+    }, [selectedSymbol, token]);
 
     useEffect(() => {
         fetchData();
@@ -72,8 +96,13 @@ const StockList: React.FC = () => {
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
-                        <div className="h-[600px] shadow-2xl">
-                            <StockChart symbol={selectedSymbol} market="idx" />
+                        <div className="h-[600px] shadow-2xl relative">
+                            {chartLoading && (
+                                <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
+                                    <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
+                                </div>
+                            )}
+                            <PatternChart data={chartData} />
                         </div>
                     </div>
                 )}
