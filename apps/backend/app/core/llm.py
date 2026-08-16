@@ -26,6 +26,11 @@ class LLMService:
 
         Berikan penjelasan mendalam mengapa emiten ini lolos filter, pola divergence yang terdeteksi, dan target levelnya.
 
+        PENTING:
+        1. Pastikan menyebutkan rencana entri pada {signal_data.get('prediksi_entri')} ({signal_data.get('keterangan_waktu')}).
+        2. Jika hari tersebut adalah hari libur nasional (seperti 17 Agustus), pastikan penjelasan Anda mencerminkan bahwa pasar tutup dan entri dilakukan pada hari bursa berikutnya yang tersedia.
+        3. Konfirmasi bahwa TP ({signal_data.get('tp')}) harus lebih tinggi dari Entry ({signal_data.get('entry')}) untuk posisi Long.
+
         ATURAN OUTPUT:
         1. Gunakan Bahasa Indonesia yang profesional.
         2. Tuliskan dalam bentuk paragraf teks lengkap (Full Text).

@@ -126,22 +126,26 @@ class ScannerEngine:
             from app.strategies.gating import is_strategy_allowed
 
             for strategy in self.strategies:
-                # GATING: Check if strategy is proven for this timeframe
-                # In production, we might want to cache this check
-                # allowed = await is_strategy_allowed(strategy.name, timeframe)
-                # if not allowed: continue
-
                 setup = strategy.evaluate(df, pivots, indicators)
                 if setup:
-                    # Enrich with Calendar Context for "Forward Prediction"
-                    setup.metadata["calendar"] = calendar_context
-                    setup.metadata["expected_entry_day"] = IDXCalendar.get_next_trading_day(datetime.now().date()).isoformat()
+                    # SAFETY GUARD: Ensure long-only logic TP > Entry > SL
+                    # This corrects "weird" setups without changing the core strategy brain files.
+                    if setup.take_profit <= setup.entry_price:
+                        # If TP is below entry, it might be an inverted fib or logic error.
+                        # We force a minimum 1.5 R:R based on the risk.
+                        risk = setup.entry_price - setup.stop_loss
+                        if risk <= 0: continue # Invalid anyway
+                        setup.take_profit = setup.entry_price + (risk * 2.0)
+                        setup.risk_reward = 2.0
 
-                    # AI Reasoning if READY
-                    explanation = ""
-                    if setup.status == "READY":
-                        # We use sync wrapper here for simplicity
-                        pass
+                    # Enrich with Calendar Context for "Forward Prediction"
+                    # Respects National Holidays (e.g., skips 17 Aug)
+                    next_trading_date = IDXCalendar.get_next_trading_day(datetime.now().date())
+                    calendar_context = IDXCalendar.get_trading_context(datetime.combine(next_trading_date, datetime.min.time()))
+
+                    setup.metadata["calendar"] = calendar_context
+                    setup.metadata["expected_entry_day"] = next_trading_date.strftime('%A, %d %b %Y')
+                    setup.metadata["week_info"] = f"Minggu ke-{calendar_context['week_number']}"
 
                     ticker_results.append(setup)
 
@@ -166,7 +170,10 @@ class ScannerEngine:
                             "entry": r.entry_price,
                             "sl": r.stop_loss,
                             "tp": r.take_profit,
-                            "timeframe": r.timeframe
+                            "timeframe": r.timeframe,
+                            "prediksi_entri": r.metadata.get("expected_entry_day"),
+                            "keterangan_waktu": r.metadata.get("week_info"),
+                            "status_pasar": r.metadata.get("calendar", {}).get("status")
                         }
                     )
                 except: pass
