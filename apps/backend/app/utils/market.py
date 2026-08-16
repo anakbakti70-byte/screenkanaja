@@ -68,29 +68,31 @@ from .calendar import IDXCalendar
 
 def is_idx_market_open() -> bool:
     """
-    Checks if IDX market is currently open based on user requirements:
-    - Monday to Friday (0-4)
-    - 08:45 - 12:00
-    - 12:55 - 17:00
-    - Saturday, Sunday, and National Holidays (Automatic via IDXCalendar)
+    Checks if IDX market is currently open based on official hours:
+    - Monday to Thursday: 09:00-12:00, 13:30-15:50
+    - Friday: 09:00-11:30, 14:00-15:50
+    - Pre-opening (08:45-09:00) included as 'open' for data fetching.
     """
     now = dt.datetime.now(dt.timezone(dt.timedelta(hours=7))) # WIB (UTC+7)
     day = now.weekday()
     current_time = now.time()
 
-    # 1. Check Weekend (Saturday=5, Sunday=6)
-    if day >= 5:
+    # 1. Check Weekend and Holidays
+    if not IDXCalendar.is_trading_day(now.date()):
         return False
 
-    # 2. Check National Holidays
-    if IDXCalendar.is_holiday(now.date()):
-        return False
-
-    # 3. Check Market Hours
-    session1_start = dt.time(8, 45)
-    session1_end = dt.time(12, 0)
-    session2_start = dt.time(12, 55)
-    session2_end = dt.time(17, 0)
+    # 2. Market Hours
+    # Using a slightly broader range to include pre-opening and post-closing buffer
+    if day == 4: # Friday
+        session1_start = dt.time(8, 45)
+        session1_end = dt.time(11, 30)
+        session2_start = dt.time(14, 0)
+        session2_end = dt.time(16, 15) # Including post-trading
+    else: # Monday - Thursday
+        session1_start = dt.time(8, 45)
+        session1_end = dt.time(12, 0)
+        session2_start = dt.time(13, 30)
+        session2_end = dt.time(16, 15) # Including post-trading
 
     is_session1 = session1_start <= current_time <= session1_end
     is_session2 = session2_start <= current_time <= session2_end
