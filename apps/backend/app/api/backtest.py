@@ -4,7 +4,7 @@ from typing import Optional, List
 from app.backtesting.engine import BacktestEngineV4
 from app.providers.yfinance_provider import YFinanceProvider
 from app.core.database import supabase
-from app.utils.market import is_idx_market_open
+from app.core.market_utils import is_idx_market_open, Fees
 from .auth import get_current_user
 
 router = APIRouter()
@@ -72,8 +72,6 @@ async def run_backtest(req: BacktestRequest, current_user: dict = Depends(get_cu
             risk_per_trade_pct=req.risk_per_trade
         )
 
-        # Override fees if provided
-        from app.utils.market import Fees
         engine.fees = Fees(
             buy_pct=req.buy_fee,
             sell_pct=req.sell_fee,

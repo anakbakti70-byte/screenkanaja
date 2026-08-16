@@ -1,7 +1,7 @@
 import unittest
 import pandas as pd
 import numpy as np
-from app.strategies.bullish_divergence import BullishDivergenceStrategy
+from app.strategies.technical_logic import BullishDivergenceStrategy
 from app.confirmation.candle import check_bullish_candle
 
 class TestStrategyRegression(unittest.TestCase):

@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, stocks, scanner, users, backtest
 import asyncio
 from contextlib import asynccontextmanager
-from app.scanner.engine import ScannerEngine
+from app.scanner.scanner_core import ScannerEngine
 
 # Global error handler for database issues
 @asynccontextmanager

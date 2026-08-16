@@ -6,8 +6,8 @@ from datetime import datetime
 # Add apps/backend to sys.path to import app modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'apps', 'backend'))
 
-from app.scanner.engine import ScannerEngine
-from app.utils.market import is_idx_market_open
+from app.scanner.scanner_core import ScannerEngine
+from app.core.market_utils import is_idx_market_open
 
 async def main():
     # Scanner Rule: Focus on "Forward Prediction" using fresh data.

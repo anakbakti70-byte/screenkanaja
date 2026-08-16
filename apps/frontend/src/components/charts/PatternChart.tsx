@@ -14,6 +14,7 @@ export const PatternChart: React.FC<PatternChartProps> = ({ data, metadata, inte
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
     const aoSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const priceLinesRef = useRef<any[]>([]);
 
     const [showVolume, setShowVolume] = useState(true);
     const [showAO, setShowAO] = useState(true);
@@ -122,6 +123,53 @@ export const PatternChart: React.FC<PatternChartProps> = ({ data, metadata, inte
         candleSeriesRef.current.setData(formattedCandles);
         if (showVolume) volumeSeriesRef.current.setData(formattedVolume);
         if (showAO) aoSeriesRef.current.setData(formattedAO);
+
+        // --- Price Lines (Entry, SL, TP) ---
+        // Clean up previous lines
+        priceLinesRef.current.forEach(line => {
+            candleSeriesRef.current?.removePriceLine(line);
+        });
+        priceLinesRef.current = [];
+
+        if (metadata) {
+            const entry = metadata.entry_price;
+            const sl = metadata.stop_loss;
+            const tp = metadata.take_profit || metadata.tp_short;
+
+            if (entry) {
+                const line = candleSeriesRef.current.createPriceLine({
+                    price: entry,
+                    color: '#3b82f6',
+                    lineWidth: 2,
+                    lineStyle: LineStyle.Solid,
+                    axisLabelVisible: true,
+                    title: 'ENTRY',
+                });
+                priceLinesRef.current.push(line);
+            }
+            if (sl) {
+                const line = candleSeriesRef.current.createPriceLine({
+                    price: sl,
+                    color: '#ef4444',
+                    lineWidth: 2,
+                    lineStyle: LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: 'STOP LOSS',
+                });
+                priceLinesRef.current.push(line);
+            }
+            if (tp) {
+                const line = candleSeriesRef.current.createPriceLine({
+                    price: tp,
+                    color: '#10b981',
+                    lineWidth: 2,
+                    lineStyle: LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: 'TAKE PROFIT',
+                });
+                priceLinesRef.current.push(line);
+            }
+        }
 
         // Markers Logic
         const markers: any[] = [];

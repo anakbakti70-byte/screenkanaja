@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'apps', 'backend'))
 
 from app.core.database import supabase
-from app.utils.market import is_idx_market_open
+from app.core.market_utils import is_idx_market_open
 
 # Load environment variables
 load_dotenv(Path(__file__).parent.parent / "apps" / "backend" / ".env")

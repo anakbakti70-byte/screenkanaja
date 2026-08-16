@@ -39,10 +39,13 @@ from typing import Dict, Any
 from app.market_structure.pivots import PivotDetector
 from app.market_structure.movements import MovementClassifier
 from app.indicators.ta import calculate_rsi, calculate_macd, calculate_ao
-from app.strategies.bullish_divergence import BullishDivergenceStrategy, DoubleBullishDivergenceStrategy
-from app.strategies.correction import CorrectionStrategy
-from app.strategies.hidden_bullish import HiddenBullishDivergenceStrategy
-from app.utils.market import is_ara, is_arb, Fees
+from app.strategies.technical_logic import (
+    BullishDivergenceStrategy,
+    DoubleBullishDivergenceStrategy,
+    CorrectionStrategy,
+    HiddenBullishDivergenceStrategy
+)
+from app.core.market_utils import is_ara, is_arb, Fees
 from app.core.database import supabase
 
 # Jumlah bar minimum untuk indikator/pivot "pemanasan" sebelum mulai mencari

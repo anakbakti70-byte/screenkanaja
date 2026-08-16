@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
-from app.scanner.engine import ScannerEngine
+from app.scanner.scanner_core import ScannerEngine
 from app.core.database import supabase
 
 router = APIRouter()

@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from .base import BaseDataProvider
 from ..core.database import supabase
-from ..utils.market import is_idx_market_open
+from ..core.market_utils import is_idx_market_open
 
 class YFinanceProvider(BaseDataProvider):
     def __init__(self, cache_expiry_intraday=300):

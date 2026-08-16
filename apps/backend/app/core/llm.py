@@ -27,9 +27,12 @@ class LLMService:
         Berikan penjelasan mendalam mengapa emiten ini lolos filter, pola divergence yang terdeteksi, dan target levelnya.
 
         PENTING:
-        1. Pastikan menyebutkan rencana entri pada {signal_data.get('prediksi_entri')} ({signal_data.get('keterangan_waktu')}).
-        2. Jika hari tersebut adalah hari libur nasional (seperti 17 Agustus), pastikan penjelasan Anda mencerminkan bahwa pasar tutup dan entri dilakukan pada hari bursa berikutnya yang tersedia.
-        3. Konfirmasi bahwa TP ({signal_data.get('tp')}) harus lebih tinggi dari Entry ({signal_data.get('entry')}) untuk posisi Long.
+        1. Pastikan RENCANA ENTRI adalah pada {signal_data.get('prediksi_entri')} ({signal_data.get('keterangan_waktu')}).
+        2. Gunakan pemahaman bahwa:
+           - Entry: Titik beli saham ({signal_data.get('entry')}).
+           - Take Profit (TP): Batas jual untuk untung ({signal_data.get('tp')}). Harus LEBIH TINGGI dari Entry.
+           - Stop Loss (SL): Batas jual untuk rugi ({signal_data.get('sl')}). Harus LEBIH RENDAH dari Entry.
+        3. Jika hari entri adalah hari libur (seperti 17 Agustus), jelaskan bahwa bursa tutup dan perdagangan dilakukan hari berikutnya.
 
         ATURAN OUTPUT:
         1. Gunakan Bahasa Indonesia yang profesional.
