@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Lock, User, TrendingUp, Eye, EyeOff } from 'lucide-react';
+import { Lock, User, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../hooks/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { Logo } from '../components/Logo';
 
 const Login: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -46,10 +47,10 @@ const Login: React.FC = () => {
     <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
       <div className="max-w-md w-full space-y-8 bg-slate-900 p-8 rounded-2xl border border-slate-800 shadow-2xl">
         <div className="text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-500/10 mb-4">
-            <TrendingUp className="w-8 h-8 text-blue-500" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-500/10 mb-4 text-blue-500">
+            <Logo className="w-10 h-10" />
           </div>
-          <h2 className="text-3xl font-bold text-white tracking-tight">Stock Scanner</h2>
+          <h2 className="text-3xl font-bold text-white tracking-tight">StockScanner</h2>
           <p className="mt-2 text-slate-400">Sign in to your account</p>
         </div>
 

@@ -14,53 +14,57 @@ class YFinanceProvider(BaseDataProvider):
         timeframe: str, 
         start: datetime = None, 
         end: datetime = None,
-        limit: int = None
+        limit: int = None,
+        use_cache: bool = True
     ) -> pd.DataFrame:
         """
         Priority:
-        1. DB Cache (ohlcv_cache)
+        1. DB Cache (ohlcv_cache) - only if data is fresh
         2. Yahoo Finance (and then save to DB)
         """
         clean_symbol = symbol.replace(".JK", "").upper()
         
         # 1. Fetch from DB
-        try:
-            if supabase:
-                query = supabase.table("ohlcv_cache") \
-                    .select("*") \
-                    .eq("symbol", clean_symbol) \
-                    .eq("timeframe", timeframe) \
-                    .order("ts", desc=True)
+        if use_cache:
+            try:
+                if supabase:
+                    # Check if we need a fresh fetch (today's data missing for 1d)
+                    query = supabase.table("ohlcv_cache") \
+                        .select("*") \
+                        .eq("symbol", clean_symbol) \
+                        .eq("timeframe", timeframe) \
+                        .order("ts", desc=True)
 
-                if limit:
-                    query = query.limit(limit)
-                else:
-                    query = query.limit(1000) # Increased limit for backtesting
+                    if limit:
+                        query = query.limit(limit)
+                    else:
+                        query = query.limit(1000)
 
-                resp = query.execute()
-                if resp.data:
-                    df_db = pd.DataFrame(resp.data)
-                    df_db['ts'] = pd.to_datetime(df_db['ts'])
-                    df_db = df_db.rename(columns={
-                        'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
-                    })
-                    df_db = df_db.set_index('ts').sort_index()
+                    resp = query.execute()
+                    if resp.data:
+                        df_db = pd.DataFrame(resp.data)
+                        df_db['ts'] = pd.to_datetime(df_db['ts'])
+                        df_db = df_db.rename(columns={
+                            'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+                        })
+                        df_db = df_db.set_index('ts').sort_index()
 
-                    # If we have enough data and it's not a live request, return it
-                    if len(df_db) >= (limit or 100):
-                        # For 1d timeframe, check if we need today's update
+                        # Logic to decide if cache is enough
+                        is_fresh = False
                         if timeframe == "1d":
                             last_ts = df_db.index[-1].date()
                             today = datetime.now(timezone.utc).date()
+                            # If last data is from today or yesterday (depending on market hours), consider it fresh
                             if last_ts >= today:
-                                return df_db
-                        else:
-                            return df_db
-        except Exception as e:
-            print(f"DB Fetch Error for {symbol}: {e}")
+                                is_fresh = True
 
-        # 2. Fetch from yfinance
-        print(f"Enriching {clean_symbol} from Yahoo Finance...")
+                        if is_fresh and len(df_db) >= (limit or 100):
+                            return df_db
+            except Exception as e:
+                print(f"DB Fetch Error for {symbol}: {e}")
+
+        # 2. Fetch from yfinance (Realtime/Latest)
+        print(f"Fetching LATEST data for {clean_symbol} from Yahoo Finance...")
         ticker = yf.Ticker(f"{clean_symbol}.JK")
         try:
             period = "2y" if timeframe == "1d" else "1mo"

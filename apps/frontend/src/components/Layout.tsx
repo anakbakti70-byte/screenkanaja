@@ -12,6 +12,7 @@ import {
     List as ListIcon
 } from 'lucide-react';
 import { useAuth } from '../hooks/AuthContext';
+import { Logo } from './Logo';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const { logout, user } = useAuth();
@@ -43,8 +44,8 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             <aside className="w-64 border-r border-slate-800 bg-slate-900 flex flex-col justify-between transition-all">
                 <div>
                     <div className="p-6 flex items-center gap-3">
-                        <div className="bg-blue-600/20 p-2 rounded-lg">
-                            <TrendingUp className="w-7 h-7 text-blue-500" />
+                        <div className="bg-blue-600/20 p-2 rounded-lg text-blue-500">
+                            <Logo className="w-7 h-7" />
                         </div>
                         <span className="text-xl font-bold tracking-tight text-white">StockScanner</span>
                     </div>
