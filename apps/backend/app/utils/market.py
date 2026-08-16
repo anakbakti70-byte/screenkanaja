@@ -64,11 +64,49 @@ def is_arb(price: float, prev_close: float, date: dt.date = None) -> bool:
     arb_price, _ = auto_reject_bounds(prev_close, date)
     return price <= arb_price
 
+from .calendar import IDXCalendar
+
+def is_idx_market_open() -> bool:
+    """
+    Checks if IDX market is currently open based on user requirements:
+    - Monday to Friday (0-4)
+    - 08:45 - 12:00
+    - 12:55 - 17:00
+    - Saturday, Sunday, and National Holidays (Automatic via IDXCalendar)
+    """
+    now = dt.datetime.now(dt.timezone(dt.timedelta(hours=7))) # WIB (UTC+7)
+    day = now.weekday()
+    current_time = now.time()
+
+    # 1. Check Weekend (Saturday=5, Sunday=6)
+    if day >= 5:
+        return False
+
+    # 2. Check National Holidays
+    if IDXCalendar.is_holiday(now.date()):
+        return False
+
+    # 3. Check Market Hours
+    session1_start = dt.time(8, 45)
+    session1_end = dt.time(12, 0)
+    session2_start = dt.time(12, 55)
+    session2_end = dt.time(17, 0)
+
+    is_session1 = session1_start <= current_time <= session1_end
+    is_session2 = session2_start <= current_time <= session2_end
+
+    return is_session1 or is_session2
+
 @dataclass(frozen=True)
 class Fees:
     buy_pct: float = 0.0019 # Conservative default
     sell_pct: float = 0.0029 # Conservative default
     slippage_pct: float = 0.001 # 0.1% slippage
+
+    @property
+    def total_sell_pct(self) -> float:
+        """Alias for engine compatibility, including PPh if necessary."""
+        return self.sell_pct
 
 def apply_fees_and_slippage(price: float, side: str, fees: Fees) -> float:
     if side == "buy":

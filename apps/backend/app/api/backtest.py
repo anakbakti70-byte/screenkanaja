@@ -4,6 +4,7 @@ from typing import Optional, List
 from app.backtesting.engine import BacktestEngineV4
 from app.providers.yfinance_provider import YFinanceProvider
 from app.core.database import supabase
+from app.utils.market import is_idx_market_open
 from .auth import get_current_user
 
 router = APIRouter()
@@ -18,9 +19,37 @@ class BacktestRequest(BaseModel):
     sell_fee: Optional[float] = 0.0029
     slippage_pct: Optional[float] = 0.001
 
+import numpy as np
+import math
+
+def make_json_safe(data):
+    """Recursively convert NaN/Inf and numpy types to JSON-safe values."""
+    if isinstance(data, dict):
+        return {k: make_json_safe(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [make_json_safe(v) for v in data]
+    elif isinstance(data, (float, np.float64, np.float32)):
+        if math.isnan(data) or np.isnan(data):
+            return 0.0
+        if math.isinf(data) or np.isinf(data):
+            return "∞"
+        return float(data)
+    elif isinstance(data, (int, np.int64, np.int32, np.uint64, np.uint32)):
+        return int(data)
+    elif hasattr(data, 'isoformat'):
+        return data.isoformat()
+    return data
+
 @router.post("/run")
 async def run_backtest(req: BacktestRequest, current_user: dict = Depends(get_current_user)):
     try:
+        # Restriction: Real-time backtest only allowed during specified market hours
+        if not is_idx_market_open():
+             raise HTTPException(
+                status_code=403,
+                detail="Fitur Backtest Real-time hanya aktif pada jam bursa IDX (Senin-Jumat, 08:45-12:00 & 12:55-17:00). Silakan coba lagi saat bursa buka."
+            )
+
         symbol = req.symbol.upper()
         # Ensure we always use .JK for yfinance to get realtime/latest data
         provider_symbol = f"{symbol}.JK" if ".JK" not in symbol else symbol
@@ -29,12 +58,15 @@ async def run_backtest(req: BacktestRequest, current_user: dict = Depends(get_cu
         print(f"DEBUG: Fetching latest REALTIME data for {provider_symbol}...")
         df = provider.get_ohlcv(provider_symbol, req.timeframe, limit=1000, use_cache=False)
 
-        if df.empty or len(df) < 30:
-            raise HTTPException(status_code=404, detail=f"Data historis tidak ditemukan atau terlalu sedikit untuk {symbol}")
+        if df.empty:
+            raise HTTPException(status_code=404, detail=f"Data historis tidak ditemukan untuk {symbol}")
 
-        print(f"DEBUG: Running backtest for {symbol} on {len(df)} candles...")
+        if len(df) < 50:
+            raise HTTPException(status_code=400, detail=f"Data historis terlalu sedikit ({len(df)} bar) untuk {symbol}. Butuh minimal 50 bar.")
 
-        # Run Engine strictly following final.md
+        print(f"DEBUG: Running backtest engine for {symbol}...")
+
+        # Run Engine
         engine = BacktestEngineV4(
             initial_balance=req.initial_capital,
             risk_per_trade_pct=req.risk_per_trade
@@ -50,21 +82,37 @@ async def run_backtest(req: BacktestRequest, current_user: dict = Depends(get_cu
 
         results = engine.run(df, symbol, req.timeframe)
 
+        # Handle Engine Errors
+        if results is None:
+            raise HTTPException(status_code=500, detail="Engine returned None")
+
+        if "error" in results:
+            raise HTTPException(status_code=400, detail=results["error"])
+
         # Force key 'candles' for frontend compatibility
         if "history_candles" in results:
             results["candles"] = results.pop("history_candles")
+        elif "candles" not in results:
+             # Ensure there is at least an empty list
+             results["candles"] = []
+
+        # Sanitize results for JSON serialization (convert NaN/Inf/Numpy)
+        safe_results = make_json_safe(results)
 
         # Versioning marker
-        results["engine_version"] = "V4.1.0-REALTIME"
-        results["_debug_info"] = "BACKTEST_API_V4_FINAL"
+        safe_results["engine_version"] = "V4.4.2-STABLE"
+        safe_results["_debug_info"] = "BACKTEST_API_V4_FINAL"
 
-        print(f"DEBUG: Backtest completed for {symbol}. Result keys: {list(results.keys())}")
-        print(f"DEBUG: Candles count: {len(results.get('candles', []))}")
+        print(f"DEBUG: Backtest completed for {symbol}. Candle count: {len(safe_results.get('candles', []))}")
 
-        return results
+        return safe_results
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"BACKTEST API ERROR: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"BACKTEST CRITICAL ERROR: {e}\n{error_trace}")
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
 
 @router.get("/symbols")
 async def get_backtest_symbols(query: Optional[str] = None, current_user: dict = Depends(get_current_user)):

@@ -1,85 +1,119 @@
 import pandas as pd
-from typing import Dict, Optional, Any
+from typing import Dict, Optional
+
 from app.strategies.base import BaseStrategy, SetupResult
 from app.fibonacci.retracement import calculate_fib_levels
 from app.fibonacci.extension import calculate_fib_extension
 from app.confirmation.candle import check_bullish_candle
 
+INDICATOR_PRIORITY = ["AO", "MACD", "RSI"]
+
+
 class HiddenBullishDivergenceStrategy(BaseStrategy):
+    """
+    final.md §5: Hidden Bullish Divergence (ABCDE) -- dipakai pada fase
+    uptrend/continuation, BUKAN reversal.
+
+    Syarat WAJIB (§5.1-§5.3), SEMUA harus terpenuhi:
+    1. Pola konsolidasi A(low)-B(high)-C(low)-D(high) sudah terbentuk
+       (min. 5 gerakan A-B-C-D-E, E adalah zona entry, bukan pivot final).
+    2. Harga higher-low: C > A (§5.1).
+    3. Indikator LEBIH RENDAH (kebalikan dari regular divergence, §5.1):
+       minimal satu dari RSI/MACD/AO lower-low di C dibanding A.
+    4. Harga masuk zona E = fib retracement 0.6/0.7 dari leg C->D (§5.2).
+    5. Candle konfirmasi valid (§3.3).
+
+    SL = LOW A (BUKAN low C, bukan low E -- §5.3, titik invalidasi tetap di low A).
+    TP = fib extension dari leg (A->D) diproyeksikan dari titik A sendiri,
+    level 1.0 (=D, level breakout) s.d. 1.2 (target minimal, §5.4).
+    """
+
     def __init__(self, config: Optional[Dict] = None):
         super().__init__("Hidden Bullish Divergence (ABCDE)", config)
 
     def evaluate(self, df: pd.DataFrame, pivots: pd.DataFrame, indicators: Dict[str, pd.Series]) -> Optional[SetupResult]:
-        """
-        Implements Hidden Bullish Divergence according to final.md §5.
-        """
-        if len(pivots) < 5: return None
+        if pivots.empty or "abcde_label" not in pivots.columns:
+            return None
 
-        lows = pivots[pivots['type'] == -1].tail(2)
-        highs = pivots[pivots['type'] == 1].tail(2)
-        if len(lows) < 2 or len(highs) < 2: return None
+        rows_d = pivots[pivots["abcde_label"] == "D"]
+        if rows_d.empty:
+            return None
 
-        # A, C (Lows) | B, D (Highs)
-        pA, pC = lows.iloc[-2], lows.iloc[-1]
-        pB, pD = highs.iloc[-2], highs.iloc[-1]
+        pD = rows_d.iloc[-1]
+        pC = pivots[pivots["abcde_label"] == "C"].iloc[-1]
+        pB = pivots[pivots["abcde_label"] == "B"].iloc[-1]
+        pA = pivots[pivots["abcde_label"] == "A"].iloc[-1]
 
-        # Rule §5.1: Price Higher Low (C > A)
-        if not (pC['price'] > pA['price']): return None
+        # Rule §5.1: harga higher-low (C > A) -- sudah divalidasi juga di
+        # MovementClassifier.label_abcde, dicek ulang di sini supaya modul
+        # strategi tidak diam-diam bergantung pada asumsi di modul lain.
+        if not (pC["price"] > pA["price"]):
+            return None
 
-        # Rule §5.1: Indicator Lower Low (between C and A)
-        div_found = False
-        indicator_used = ""
-        for name in ['AO', 'MACD', 'RSI']:
+        # Rule §5.1: indikator LEBIH RENDAH di C dibanding A (kebalikan dari
+        # regular divergence -- harga naik, indikator turun).
+        indicator_used = None
+        for name in INDICATOR_PRIORITY:
             series = indicators.get(name)
-            if series is None or series.empty: continue
-            if series.iloc[int(pC['index'])] < series.iloc[int(pA['index'])]:
-                div_found = True
+            if series is None or series.empty:
+                continue
+            idx_a, idx_c = int(pA["index"]), int(pC["index"])
+            if max(idx_a, idx_c) >= len(series):
+                continue
+            if series.iloc[idx_c] < series.iloc[idx_a]:
                 indicator_used = name
                 break
-        if not div_found: return None
+        if indicator_used is None:
+            return None
 
-        # Rule §5.2: Zona Titik E (Fib 0.6 / 0.7 from Low C -> High D)
-        zone_e = calculate_fib_levels(pC['price'], pD['price'], [0.6, 0.7])
-        current_price = df['Close'].iloc[-1]
+        # Rule §5.2: zona titik E = fib retracement 0.6/0.7 dari LOW C -> HIGH D
+        zone_e = calculate_fib_levels(start=float(pC["price"]), end=float(pD["price"]), levels=[0.6, 0.7])
+        current_price = float(df["Close"].iloc[-1])
+        zone_high, zone_low = zone_e[0.6], zone_e[0.7]
+        if not (zone_low <= current_price <= zone_high):
+            return None
 
-        in_zone = zone_e[0.7] <= current_price <= zone_e[0.6]
-        if not in_zone: return None
+        if not check_bullish_candle(df):
+            return None
 
-        is_ready = check_bullish_candle(df)
-        status = "READY" if is_ready else "WAIT_CONFIRMATION"
+        entry_price = current_price
+        sl_price = float(pA["price"])  # Rule §5.3: SL selalu di low A
 
-        # Rule §5.4: Take Profit (Fib 1.2 from point A)
-        # Using wave A-D for projection
-        tp_levels = calculate_fib_levels(pA['price'], pD['price'], [1.2])
-        tp_price = tp_levels.get(1.2)
+        # Rule §5.4: TP = fib extension leg (A->D), diproyeksikan dari A sendiri.
+        # Level 1.0 jatuh tepat di D (level breakout), target minimal di 1.2.
+        tp_levels = calculate_fib_extension(point_a=float(pA["price"]), point_b=float(pD["price"]),
+                                             point_c=float(pA["price"]), levels=[1.0, 1.2])
+        tp_price = tp_levels[1.2]
+        breakout_level = tp_levels[1.0]
 
-        # Rule §5.3: SL = LOW A
-        sl_price = pA['price']
-
-        risk = abs(current_price - sl_price)
-        reward = abs(tp_price - current_price)
-        rr = reward / risk if risk > 0 else 0
+        risk = entry_price - sl_price
+        reward = tp_price - entry_price
+        if risk <= 0:
+            return None
+        rr = reward / risk
 
         plot_data = {
             "pivots": {
-                "A": {"idx": int(pA['index']), "price": float(pA['price'])},
-                "B": {"idx": int(pB['index']), "price": float(pB['price'])},
-                "C": {"idx": int(pC['index']), "price": float(pC['price'])},
-                "D": {"idx": int(pD['index']), "price": float(pD['price'])}
+                "A": {"idx": int(pA["index"]), "price": float(pA["price"])},
+                "B": {"idx": int(pB["index"]), "price": float(pB["price"])},
+                "C": {"idx": int(pC["index"]), "price": float(pC["price"])},
+                "D": {"idx": int(pD["index"]), "price": float(pD["price"])},
             },
-            "fib_levels": { "zone_e": zone_e, "tp_12": tp_price },
-            "indicator": indicator_used
+            "fib_levels": {"zone_e": {str(k): v for k, v in zone_e.items()},
+                            "breakout_level_1_0": breakout_level,
+                            "tp_1_2": tp_price},
+            "indicator": indicator_used,
         }
 
         return SetupResult(
-            status=status,
+            status="READY",
             strategy_name=self.name,
-            symbol=df.attrs.get('symbol', 'UNKNOWN'),
-            timeframe=df.attrs.get('timeframe', 'UNKNOWN'),
-            entry_price=float(current_price),
-            stop_loss=float(sl_price),
-            take_profit=float(tp_price),
-            risk_reward=float(rr),
-            score=float(rr * 10),
-            metadata={**plot_data, "indicator_used": indicator_used}
+            symbol=df.attrs.get("symbol", "UNKNOWN"),
+            timeframe=df.attrs.get("timeframe", "UNKNOWN"),
+            entry_price=entry_price,
+            stop_loss=sl_price,
+            take_profit=tp_price,
+            risk_reward=rr,
+            score=rr * 10,
+            metadata=plot_data,
         )

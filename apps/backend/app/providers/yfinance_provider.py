@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from .base import BaseDataProvider
 from ..core.database import supabase
+from ..utils.market import is_idx_market_open
 
 class YFinanceProvider(BaseDataProvider):
     def __init__(self, cache_expiry_intraday=300):
@@ -15,67 +16,68 @@ class YFinanceProvider(BaseDataProvider):
         start: datetime = None, 
         end: datetime = None,
         limit: int = None,
-        use_cache: bool = True
+        use_cache: bool = False
     ) -> pd.DataFrame:
         """
-        Priority:
-        1. DB Cache (ohlcv_cache) - only if data is fresh
-        2. Yahoo Finance (and then save to DB)
+        Priority Strategy:
+        - MARKET OPEN: Fetch REALTIME from Yahoo (1s accuracy) -> Update Cache -> Return.
+        - MARKET CLOSED: Fetch from DB CACHE (data from last close) -> Return.
         """
         clean_symbol = symbol.replace(".JK", "").upper()
-        
-        # 1. Fetch from DB
-        if use_cache:
+        market_is_active = is_idx_market_open()
+
+        # --- PATH A: MARKET IS OPEN (Realtime Mode) ---
+        if market_is_active:
+            print(f"🚀 MARKET OPEN: Fetching 1s REALTIME data for {clean_symbol}...")
+            ticker = yf.Ticker(f"{clean_symbol}.JK")
             try:
-                if supabase:
-                    # Check if we need a fresh fetch (today's data missing for 1d)
-                    query = supabase.table("ohlcv_cache") \
-                        .select("*") \
-                        .eq("symbol", clean_symbol) \
-                        .eq("timeframe", timeframe) \
-                        .order("ts", desc=True)
+                period = "2y" if timeframe == "1d" else "1mo"
+                df = ticker.history(period=period, interval=timeframe)
 
-                    if limit:
-                        query = query.limit(limit)
-                    else:
-                        query = query.limit(1000)
-
-                    resp = query.execute()
-                    if resp.data:
-                        df_db = pd.DataFrame(resp.data)
-                        df_db['ts'] = pd.to_datetime(df_db['ts'])
-                        df_db = df_db.rename(columns={
-                            'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
-                        })
-                        df_db = df_db.set_index('ts').sort_index()
-
-                        # Logic to decide if cache is enough
-                        is_fresh = False
-                        if timeframe == "1d":
-                            last_ts = df_db.index[-1].date()
-                            today = datetime.now(timezone.utc).date()
-                            # If last data is from today or yesterday (depending on market hours), consider it fresh
-                            if last_ts >= today:
-                                is_fresh = True
-
-                        if is_fresh and len(df_db) >= (limit or 100):
-                            return df_db
+                if not df.empty:
+                    self._save_to_cache(clean_symbol, timeframe, df)
+                    if limit: return df.tail(limit)
+                    return df
+                print(f"⚠️ Yahoo returned empty for {clean_symbol}, falling back to cache...")
             except Exception as e:
-                print(f"DB Fetch Error for {symbol}: {e}")
+                print(f"❌ Realtime Fetch Error for {symbol}: {e}")
 
-        # 2. Fetch from yfinance (Realtime/Latest)
-        print(f"Fetching LATEST data for {clean_symbol} from Yahoo Finance...")
-        ticker = yf.Ticker(f"{clean_symbol}.JK")
+        # --- PATH B: MARKET IS CLOSED OR REALTIME FAILED (Cache Mode) ---
+        if not market_is_active:
+            print(f"😴 MARKET CLOSED: Loading {clean_symbol} data from Database Cache...")
+
         try:
-            period = "2y" if timeframe == "1d" else "1mo"
-            df = ticker.history(period=period, interval=timeframe)
+            if supabase:
+                query = supabase.table("ohlcv_cache") \
+                    .select("*") \
+                    .eq("symbol", clean_symbol) \
+                    .eq("timeframe", timeframe) \
+                    .order("ts", desc=True)
 
-            if not df.empty:
-                self._save_to_cache(clean_symbol, timeframe, df)
-                if limit: return df.tail(limit)
-                return df
+                if limit:
+                    query = query.limit(limit)
+                else:
+                    query = query.limit(1000)
+
+                resp = query.execute()
+                if resp.data:
+                    df_db = pd.DataFrame(resp.data)
+                    df_db['ts'] = pd.to_datetime(df_db['ts'])
+                    df_db = df_db.rename(columns={
+                        'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+                    })
+                    df_db = df_db.set_index('ts').sort_index()
+                    return df_db
+
+                if not market_is_active:
+                    print(f"❓ No cache found for {clean_symbol} in DB.")
         except Exception as e:
-            print(f"yfinance fetch error for {symbol}: {e}")
+            print(f"❌ DB Cache Fetch Error for {symbol}: {e}")
+
+        # --- PATH C: FINAL FALLBACK (Only if market is active but cache and initial fetch failed) ---
+        if market_is_active:
+             # Try one last time without high expectations
+             return pd.DataFrame()
 
         return pd.DataFrame()
 
@@ -84,7 +86,6 @@ class YFinanceProvider(BaseDataProvider):
 
         data = []
         for ts, row in df.iterrows():
-            # Handle possible NaNs from yfinance
             if pd.isna(row['Close']): continue
 
             data.append({
@@ -99,7 +100,6 @@ class YFinanceProvider(BaseDataProvider):
             })
 
         try:
-            # Upsert in chunks to avoid request size limits
             chunk_size = 100
             for i in range(0, len(data), chunk_size):
                 supabase.table("ohlcv_cache").upsert(

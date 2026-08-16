@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'apps', 'backend'))
 
 from app.core.database import supabase
+from app.utils.market import is_idx_market_open
 
 # Load environment variables
 load_dotenv(Path(__file__).parent.parent / "apps" / "backend" / ".env")
@@ -17,9 +18,13 @@ load_dotenv(Path(__file__).parent.parent / "apps" / "backend" / ".env")
 def update_realtime_data():
     """
     Worker 2: Update harga real-time hanya untuk emiten yang SUDAH ADA di database.
-    Menggunakan teknik batch download untuk kecepatan maksimal.
     """
-    print(f"🔄 [Worker 2] Starting Real-time Price Update: {datetime.now()}")
+    # Rule: Only run during IDX Market Hours (08:45-12:00, 12:24-17:00 WIB)
+    if not is_idx_market_open():
+        print(f"😴 [Worker 2] Market is CLOSED. Skipping update at {datetime.now()}.")
+        return
+
+    print(f"🔄 [Worker 2] Starting Real-time Price Update (Market Open): {datetime.now()}")
 
     try:
         # 1. Ambil HANYA emiten yang sudah terdaftar di database (stock_master)
@@ -85,7 +90,5 @@ if __name__ == "__main__":
     # Jalankan terus menerus selama sistem aktif
     while True:
         update_realtime_data()
-        # Sleep selama 5 menit untuk menjaga agar tidak kena ban oleh Yahoo Finance
-        # dan agar database tidak terlalu sibuk.
-        print("😴 [Worker 2] Menunggu 5 menit untuk siklus berikutnya...")
-        time.sleep(300)
+        # High-Speed 1s polling for stock master prices during market hours
+        time.sleep(1)

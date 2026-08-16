@@ -3,85 +3,81 @@
 # Pastikan berada di root project
 PROJECT_ROOT=$(pwd)
 
-echo "🚀 Memulai Ekosistem Stock Scanner CTG (3-Worker Optimized)..."
+echo "🚀 Memulai Ekosistem Stock Scanner CTG (Universal Auto-Reload)..."
 
-# Kill ghost processes if any
-pkill -f "uvicorn app.main:app" 2>/dev/null
+# Nuclear cleanup function
+nuclear_cleanup() {
+    echo -e "\n🛑 Menghentikan SEMUA layanan (Nuclear Mode)..."
+    # Kill specific PIDs if they exist
+    kill $WORKER1_PID $WORKER2_PID $WORKER3_PID $SCANNER_PID $BACKEND_PID $FRONTEND_PID 2>/dev/null
+
+    # Force kill any remaining processes by pattern
+    pkill -f "uvicorn app.main:app" 2>/dev/null
+    pkill -f "vite" 2>/dev/null
+    pkill -f "watchfiles" 2>/dev/null
+    pkill -f "run_scanner.py" 2>/dev/null
+    pkill -f "update_market_data.py" 2>/dev/null
+    pkill -f "sync_universe.py" 2>/dev/null
+    pkill -f "db_janitor.py" 2>/dev/null
+
+    echo "👋 Semua proses telah dimatikan."
+    exit 0
+}
+
+# Trap signals
+trap nuclear_cleanup SIGINT SIGTERM EXIT
+
+# 1. Kill ghost processes initially
+pkill -f "uvicorn" 2>/dev/null
 pkill -f "vite" 2>/dev/null
-pkill -f "run_scanner.py" 2>/dev/null
-pkill -f "update_market_data.py" 2>/dev/null
-pkill -f "sync_universe.py" 2>/dev/null
-pkill -f "db_janitor.py" 2>/dev/null
+pkill -f "watchfiles" 2>/dev/null
 
-# Cleanup local cache files
-rm -rf "$PROJECT_ROOT/data/cache/"*.parquet
-rm -rf "$PROJECT_ROOT/apps/backend/data/cache/"*.parquet
+# 2. Cleanup Cache
+rm -rf "$PROJECT_ROOT/data/cache/"*.parquet 2>/dev/null
 
-# Load Virtual Environment
+# 3. Load Virtual Environment
 source venv/bin/activate
 export PYTHONPATH=$PYTHONPATH:$PROJECT_ROOT/apps/backend
 
-# 1. Validasi & Migrasi Database
-echo "🔍 [1/5] Memeriksa & Menyiapkan Tabel Database (Supabase)..."
+# 4. Validasi Database
+echo "🔍 [1/3] Memeriksa Database..."
 python3 scripts/check_tables.py
-if [ $? -ne 0 ]; then
-    echo "❌ Gagal menyiapkan database. Periksa koneksi Supabase Anda."
-    exit 1
-fi
 
-# 2. WORKER 1: Discovery (Latar Belakang)
-echo "📊 [2/5] Worker 1: Discovery IDX Active (Latar Belakang)..."
-python3 scripts/sync_universe.py &
+# 5. Jalankan Workers (Pantau Scripts + Logika Inti agar Rumus Baru Langsung Aktif)
+echo "📊 [2/3] Menyalakan Workers & Scanner (Auto-Reload Enabled)..."
+
+WATCH_PATHS="scripts/ apps/backend/app/"
+
+watchfiles --filter python "python3 scripts/sync_universe.py" $WATCH_PATHS &
 WORKER1_PID=$!
-
-# 3. WORKER 2: Real-time Price Update
-echo "⚡ [3/5] Worker 2: Real-time Price Updater (Polling)..."
-python3 scripts/update_market_data.py &
+watchfiles --filter python "python3 scripts/update_market_data.py" $WATCH_PATHS &
 WORKER2_PID=$!
-
-# 4. WORKER 3: DB Janitor (Maintenance)
-echo "🧹 [4/5] Worker 3: Database Janitor (Auto-clean)..."
-python3 scripts/db_janitor.py &
+watchfiles --filter python "python3 scripts/db_janitor.py" $WATCH_PATHS &
 WORKER3_PID=$!
+watchfiles --filter python "python3 scripts/run_scanner.py" $WATCH_PATHS &
+SCANNER_PID=$!
 
-# 5. Jalankan Backend & Frontend
-echo "🔌 [5/5] Menyalakan Backend API & Frontend UI..."
+# 6. Jalankan Backend & Frontend
+echo "🔌 [3/3] Menyalakan API & UI..."
 
-# Backend
+# Backend API
 cd apps/backend
-PYTHONUNBUFFERED=1 PYTHONPATH=. uvicorn app.main:app --port 8000 --host 0.0.0.0 --log-level info &
+PYTHONUNBUFFERED=1 PYTHONPATH=. uvicorn app.main:app --port 8000 --host 0.0.0.0 --log-level info --reload &
 BACKEND_PID=$!
 
-# Frontend
+# Frontend UI
 cd ../frontend
 npm run dev &
 FRONTEND_PID=$!
 
-# Jalankan Scanner Strategi CTG
-cd $PROJECT_ROOT
-(
-    while true; do
-        echo "--- SCAN START: $(date) ---"
-        python3 scripts/run_scanner.py
-        echo "--- SCAN END: Menunggu 15 Menit ---"
-        sleep 900
-    done
-) &
-SCANNER_PID=$!
-
 echo "-------------------------------------------------------"
-echo "🌟 SEMUA SISTEM AKTIF DENGAN 3 WORKER PARALEL!"
-echo "📈 Dashboard: http://localhost:3000"
-echo "🛠️  Backend  : http://localhost:8000"
-echo "💡 Log ditampilkan langsung di terminal ini."
+echo "🌟 SEMUA SISTEM AKTIF DENGAN AUTO-UPDATE TOTAL!"
+echo "✅ Edit RUMUS di: apps/backend/app/strategies/"
+echo "✅ Edit API di  : apps/backend/app/api/"
+echo "✅ Edit UI di   : apps/frontend/src/"
+echo "✅ Edit SCRIPT di: scripts/"
 echo "-------------------------------------------------------"
+echo "💡 Tekan CTRL+C untuk mematikan SEMUA proses sekaligus."
 
-cleanup() {
-    echo -e "\n🛑 Menghentikan semua layanan & worker..."
-    kill $WORKER1_PID $WORKER2_PID $WORKER3_PID $BACKEND_PID $FRONTEND_PID $SCANNER_PID 2>/dev/null
-    echo "👋 Sampai jumpa!"
-    exit
-}
-
-trap cleanup SIGINT
+# Wait for all background processes
 wait

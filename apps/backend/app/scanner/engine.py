@@ -119,6 +119,9 @@ class ScannerEngine:
             pivots = self.movement_classifier.label_5_movements(pivots)
             pivots = self.movement_classifier.label_abcde(pivots)
 
+            from app.utils.calendar import IDXCalendar
+            calendar_context = IDXCalendar.get_trading_context(datetime.now())
+
             ticker_results = []
             from app.strategies.gating import is_strategy_allowed
 
@@ -130,6 +133,10 @@ class ScannerEngine:
 
                 setup = strategy.evaluate(df, pivots, indicators)
                 if setup:
+                    # Enrich with Calendar Context for "Forward Prediction"
+                    setup.metadata["calendar"] = calendar_context
+                    setup.metadata["expected_entry_day"] = IDXCalendar.get_next_trading_day(datetime.now().date()).isoformat()
+
                     # AI Reasoning if READY
                     explanation = ""
                     if setup.status == "READY":
@@ -177,7 +184,12 @@ class ScannerEngine:
                 "risk_reward": r.risk_reward,
                 "indicator_used": r.metadata.get("indicator_used", "Unknown"),
                 "score": r.score,
-                "metadata": {**r.metadata, "explanation": explanation},
+                "metadata": {
+                    **r.metadata,
+                    "explanation": explanation,
+                    "calendar_info": r.metadata.get("calendar"),
+                    "expected_entry_day": r.metadata.get("expected_entry_day")
+                },
                 "created_at": r.timestamp.isoformat()
             })
 
