@@ -4,78 +4,71 @@ from typing import List, Optional
 class IDXCalendar:
     """
     Indonesian Stock Exchange (IDX) Calendar Utility.
-    Includes National Holidays and Cuti Bersama for 2024 and 2025.
+    Includes National Holidays and Cuti Bersama for 2023 - 2026.
     """
 
+    # Official IDX Holidays 2023
+    HOLIDAYS_2023 = [
+        dt.date(2023, 1, 1), dt.date(2023, 1, 2), dt.date(2023, 1, 22), dt.date(2023, 1, 23),
+        dt.date(2023, 2, 18), dt.date(2023, 3, 22), dt.date(2023, 3, 23), dt.date(2023, 4, 7),
+        dt.date(2023, 4, 19), dt.date(2023, 4, 20), dt.date(2023, 4, 21), dt.date(2023, 4, 24),
+        dt.date(2023, 4, 25), dt.date(2023, 5, 1), dt.date(2023, 5, 18), dt.date(2023, 6, 1),
+        dt.date(2023, 6, 2), dt.date(2023, 6, 4), dt.date(2023, 6, 28), dt.date(2023, 6, 29),
+        dt.date(2023, 6, 30), dt.date(2023, 7, 19), dt.date(2023, 8, 17), dt.date(2023, 9, 28),
+        dt.date(2023, 12, 25), dt.date(2023, 12, 26),
+    ]
+
     # Official IDX Holidays 2024
-    # Source: https://www.idx.co.id/en-us/about-idx/holiday-calendar/
     HOLIDAYS_2024 = [
-        dt.date(2024, 1, 1),   # New Year's Day
-        dt.date(2024, 2, 8),   # Isra Mi'raj of Prophet Muhammad SAW
-        dt.date(2024, 2, 9),   # Joint Holiday (Chinese New Year)
-        dt.date(2024, 2, 10),  # Chinese New Year 2575 Kongzili
-        dt.date(2024, 2, 14),  # General Election
-        dt.date(2024, 3, 11),  # Hari Suci Nyepi (Saka New Year 1946)
-        dt.date(2024, 3, 12),  # Joint Holiday (Saka New Year)
-        dt.date(2024, 3, 29),  # Good Friday
-        dt.date(2024, 4, 8),   # Joint Holiday (Eid Al-Fitr 1445H)
-        dt.date(2024, 4, 9),   # Joint Holiday (Eid Al-Fitr 1445H)
-        dt.date(2024, 4, 10),  # Eid Al-Fitr 1445H
-        dt.date(2024, 4, 11),  # Eid Al-Fitr 1445H
-        dt.date(2024, 4, 12),  # Joint Holiday (Eid Al-Fitr 1445H)
-        dt.date(2024, 4, 15),  # Joint Holiday (Eid Al-Fitr 1445H)
-        dt.date(2024, 5, 1),   # International Labor Day
-        dt.date(2024, 5, 9),   # Ascension Day of Jesus Christ
-        dt.date(2024, 5, 10),  # Joint Holiday (Ascension Day)
-        dt.date(2024, 5, 23),  # Waisak Day 2568 BE
-        dt.date(2024, 5, 24),  # Joint Holiday (Waisak Day)
-        dt.date(2024, 6, 1),   # Pancasila Day
-        dt.date(2024, 6, 17),  # Eid Al-Adha 1445H
-        dt.date(2024, 6, 18),  # Joint Holiday (Eid Al-Adha 1445H)
-        dt.date(2024, 7, 7),   # Islamic New Year 1446H
-        dt.date(2024, 8, 17),  # Independence Day of RI
-        dt.date(2024, 9, 16),  # Birthday of Prophet Muhammad SAW
-        dt.date(2024, 12, 25), # Christmas Day
-        dt.date(2024, 12, 26), # Joint Holiday (Christmas Day)
+        dt.date(2024, 1, 1), dt.date(2024, 2, 8), dt.date(2024, 2, 9), dt.date(2024, 2, 10),
+        dt.date(2024, 2, 14), dt.date(2024, 3, 11), dt.date(2024, 3, 12), dt.date(2024, 3, 29),
+        dt.date(2024, 4, 8), dt.date(2024, 4, 9), dt.date(2024, 4, 10), dt.date(2024, 4, 11),
+        dt.date(2024, 4, 12), dt.date(2024, 4, 15), dt.date(2024, 5, 1), dt.date(2024, 5, 9),
+        dt.date(2024, 5, 10), dt.date(2024, 5, 23), dt.date(2024, 5, 24), dt.date(2024, 6, 1),
+        dt.date(2024, 6, 17), dt.date(2024, 6, 18), dt.date(2024, 7, 7), dt.date(2024, 8, 17),
+        dt.date(2024, 9, 16), dt.date(2024, 12, 25), dt.date(2024, 12, 26),
     ]
 
     # Official IDX Holidays 2025
-    # Source: Government Decree (SKB 3 Menteri)
     HOLIDAYS_2025 = [
-        dt.date(2025, 1, 1),   # Tahun Baru 2025 Masehi
-        dt.date(2025, 1, 27),  # Isra Mikraj Nabi Muhammad SAW
-        dt.date(2025, 1, 28),  # Cuti Bersama Tahun Baru Imlek
-        dt.date(2025, 1, 29),  # Tahun Baru Imlek 2576 Kongzili
-        dt.date(2025, 3, 28),  # Cuti Bersama Hari Suci Nyepi
-        dt.date(2025, 3, 29),  # Hari Suci Nyepi (Tahun Baru Saka 1947)
-        dt.date(2025, 3, 31),  # Hari Raya Idul Fitri 1446 H
-        dt.date(2025, 4, 1),   # Hari Raya Idul Fitri 1446 H
-        dt.date(2025, 4, 2),   # Cuti Bersama Idul Fitri 1446 H
-        dt.date(2025, 4, 3),   # Cuti Bersama Idul Fitri 1446 H
-        dt.date(2025, 4, 4),   # Cuti Bersama Idul Fitri 1446 H
-        dt.date(2025, 4, 7),   # Cuti Bersama Idul Fitri 1446 H
-        dt.date(2025, 4, 18),  # Wafat Yesus Kristus
-        dt.date(2025, 5, 1),   # Hari Buruh Internasional
-        dt.date(2025, 5, 12),  # Hari Raya Waisak 2569 BE
-        dt.date(2025, 5, 13),  # Cuti Bersama Hari Raya Waisak
-        dt.date(2025, 5, 29),  # Kenaikan Yesus Kristus
-        dt.date(2025, 5, 30),  # Cuti Bersama Kenaikan Yesus Kristus
-        dt.date(2025, 6, 1),   # Hari Lahir Pancasila
-        dt.date(2025, 6, 6),   # Hari Raya Idul Adha 1446 H
-        dt.date(2025, 6, 9),   # Cuti Bersama Hari Raya Idul Adha
-        dt.date(2025, 6, 27),  # Tahun Baru Islam 1447 H
-        dt.date(2025, 8, 17),  # Hari Kemerdekaan RI
-        dt.date(2025, 9, 5),   # Maulid Nabi Muhammad SAW
-        dt.date(2025, 12, 25), # Hari Raya Natal
-        dt.date(2025, 12, 26), # Cuti Bersama Hari Raya Natal
+        dt.date(2025, 1, 1), dt.date(2025, 1, 27), dt.date(2025, 1, 28), dt.date(2025, 1, 29),
+        dt.date(2025, 3, 28), dt.date(2025, 3, 29), dt.date(2025, 3, 31), dt.date(2025, 4, 1),
+        dt.date(2025, 4, 2), dt.date(2025, 4, 3), dt.date(2025, 4, 4), dt.date(2025, 4, 7),
+        dt.date(2025, 4, 18), dt.date(2025, 5, 1), dt.date(2025, 5, 12), dt.date(2025, 5, 13),
+        dt.date(2025, 5, 29), dt.date(2025, 5, 30), dt.date(2025, 6, 1), dt.date(2025, 6, 6),
+        dt.date(2025, 6, 9), dt.date(2025, 6, 27), dt.date(2025, 8, 17), dt.date(2025, 9, 5),
+        dt.date(2025, 12, 25), dt.date(2025, 12, 26),
     ]
 
-    ALL_HOLIDAYS = sorted(list(set(HOLIDAYS_2024 + HOLIDAYS_2025)))
+    # Tentative IDX Holidays 2026 (Estimates + Guaranteed Fixed Dates)
+    HOLIDAYS_2026 = [
+        dt.date(2026, 1, 1),   # Tahun Baru
+        dt.date(2026, 1, 15),  # Isra Mikraj (Est)
+        dt.date(2026, 2, 17),  # Tahun Baru Imlek (Est)
+        dt.date(2026, 3, 19),  # Hari Raya Nyepi (Est)
+        dt.date(2026, 3, 20),  # Idul Fitri (Est)
+        dt.date(2026, 3, 21),  # Idul Fitri (Est)
+        dt.date(2026, 4, 3),   # Wafat Yesus Kristus
+        dt.date(2026, 5, 1),   # Hari Buruh
+        dt.date(2026, 5, 14),  # Kenaikan Yesus Kristus (Est)
+        dt.date(2026, 5, 31),  # Hari Raya Waisak (Est)
+        dt.date(2026, 6, 1),   # Hari Lahir Pancasila
+        dt.date(2026, 6, 26),  # Idul Adha (Est)
+        dt.date(2026, 7, 16),  # Tahun Baru Islam (Est)
+        dt.date(2026, 8, 17),  # Hari Kemerdekaan RI (FIXED)
+        dt.date(2026, 8, 25),  # Maulid Nabi (Est)
+        dt.date(2026, 12, 25), # Natal
+        dt.date(2026, 12, 26), # Cuti Bersama Natal
+    ]
+
+    # COMBINE ALL YEARS
+    ALL_HOLIDAYS = sorted(list(set(
+        HOLIDAYS_2023 + HOLIDAYS_2024 + HOLIDAYS_2025 + HOLIDAYS_2026
+    )))
 
     @classmethod
     def is_holiday(cls, date_val: Optional[dt.date] = None) -> bool:
         if date_val is None:
-            # Default to WIB
             date_val = dt.datetime.now(dt.timezone(dt.timedelta(hours=7))).date()
         return date_val in cls.ALL_HOLIDAYS
 
@@ -83,15 +76,10 @@ class IDXCalendar:
     def is_trading_day(cls, date_val: Optional[dt.date] = None) -> bool:
         if date_val is None:
             date_val = dt.datetime.now(dt.timezone(dt.timedelta(hours=7))).date()
-
-        # Weekend
-        if date_val.weekday() >= 5:
+        if date_val.weekday() >= 5: # Sat, Sun
             return False
-
-        # Holiday
         if cls.is_holiday(date_val):
             return False
-
         return True
 
     @classmethod
@@ -110,16 +98,11 @@ class IDXCalendar:
 
     @classmethod
     def get_trading_context(cls, timestamp: dt.datetime) -> dict:
-        """
-        Enriches a timestamp with trading context (week, day name, status).
-        """
-        # Convert to WIB
         wib_ts = timestamp.astimezone(dt.timezone(dt.timedelta(hours=7)))
         date_val = wib_ts.date()
-
         return {
             "day_name": wib_ts.strftime('%A'),
             "week_number": wib_ts.isocalendar()[1],
-            "is_market_open": cls.is_trading_day(date_val),
-            "status": "Holiday" if cls.is_holiday(date_val) else ("Weekend" if date_val.weekday() >= 5 else "Open")
+            "is_trading_day": cls.is_trading_day(date_val),
+            "status": "Holiday" if cls.is_holiday(date_val) else ("Weekend" if date_val.weekday() >= 5 else "Trading Day")
         }

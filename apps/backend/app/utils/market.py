@@ -1,6 +1,7 @@
 import math
 import datetime as dt
 from dataclasses import dataclass
+from .calendar import IDXCalendar
 
 LOT = 100
 HARGA_MIN = 50
@@ -19,7 +20,6 @@ TICK_REGIMES = (
 
 def tick_size(price: float, date: dt.date = None) -> int:
     if price < 0: return 1
-    # Simple implementation based on latest regime for now
     for upper, tick in TICK_REGIMES[-1].bands:
         if upper is None or price < upper:
             return tick
@@ -27,7 +27,6 @@ def tick_size(price: float, date: dt.date = None) -> int:
 
 def round_to_tick(price: float, date: dt.date = None, mode: str = "nearest") -> int:
     if price <= 0: return HARGA_MIN
-
     tick = tick_size(price, date)
     ratio = price / tick
     if mode == "down":
@@ -36,24 +35,20 @@ def round_to_tick(price: float, date: dt.date = None, mode: str = "nearest") -> 
         steps = math.ceil(ratio - 1e-9)
     else:
         steps = math.floor(ratio + 0.5 + 1e-9)
-
     return max(int(steps * tick), HARGA_MIN)
 
 def auto_reject_bounds(prev_close: float, date: dt.date = None) -> tuple[int, int]:
-    # Simplified modern IDX rules
     if prev_close < 200:
         ara = 0.35
-        arb = 0.35 # Simplified: matching modern ARB symmetrical rules or 15% as per transition
+        arb = 0.35
     elif prev_close <= 5000:
         ara = 0.25
         arb = 0.25
     else:
         ara = 0.20
         arb = 0.20
-
     lower_raw = prev_close * (1 - arb)
     upper_raw = prev_close * (1 + ara)
-
     return round_to_tick(lower_raw, date, "up"), round_to_tick(upper_raw, date, "down")
 
 def is_ara(price: float, prev_close: float, date: dt.date = None) -> bool:
@@ -64,50 +59,62 @@ def is_arb(price: float, prev_close: float, date: dt.date = None) -> bool:
     arb_price, _ = auto_reject_bounds(prev_close, date)
     return price <= arb_price
 
-from .calendar import IDXCalendar
-
 def is_idx_market_open() -> bool:
     """
-    Checks if IDX market is currently open based on official hours:
-    - Pre-opening: 08:45
-    - Session 1: 09:00 - 12:00 (Fri: 11:30)
-    - Session 2: 13:30 - 15:50 (Fri: 14:00)
-    - Closing/Post-trading: until 16:15
+    Checks if IDX market is currently open based on official BEI schedule:
+    - Monday to Friday (excluding National Holidays)
+    - Pra-pembukaan: 08:45:00 – 08:59:59
+    - Sesi I: 09:00:00 – 12:00:00 (Fri: 11:30:00)
+    - Sesi II: 13:30:00 – 15:49:59 (Fri: 14:00:00)
+    - Pra-penutupan: 15:50:00 – 16:00:59
+    - Pasca-penutupan: 16:02:00 – 16:15:00
     """
     now = dt.datetime.now(dt.timezone(dt.timedelta(hours=7))) # WIB (UTC+7)
-    day = now.weekday()
+    day = now.weekday() # 0=Mon, 4=Fri, 5=Sat, 6=Sun
     current_time = now.time()
 
-    # 1. Check Weekend and Holidays
+    # 1. Check Weekend and National Holidays (Automatic skip)
     if not IDXCalendar.is_trading_day(now.date()):
         return False
 
-    # 2. Check Market Hours
-    if day == 4: # Friday
-        session1_start = dt.time(8, 45)
-        session1_end = dt.time(11, 30)
-        session2_start = dt.time(14, 0)
-        session2_end = dt.time(16, 15)
-    else: # Monday - Thursday
-        session1_start = dt.time(8, 45)
-        session1_end = dt.time(12, 0)
-        session2_start = dt.time(13, 30)
-        session2_end = dt.time(16, 15)
+    # 2. Check Session Hours
+    # Pre-opening starts at 08:45:00 for all trading days
+    if current_time < dt.time(8, 45, 0):
+        return False
 
-    is_session1 = session1_start <= current_time <= session1_end
-    is_session2 = session2_start <= current_time <= session2_end
+    # Monday - Thursday Schedule
+    if day <= 3:
+        session1_end = dt.time(12, 0, 0)
+        session2_start = dt.time(13, 30, 0)
+    # Friday Schedule
+    elif day == 4:
+        session1_end = dt.time(11, 30, 0)
+        session2_start = dt.time(14, 0, 0)
+    else:
+        return False # Should have been caught by is_trading_day but safety first
 
-    return is_session1 or is_session2
+    # Check against Lunch Break
+    if session1_end < current_time < session2_start:
+        return False
+
+    # Closing: Market fully closes at 16:15:00 (Post-trading session)
+    if current_time > dt.time(16, 15, 0):
+        return False
+
+    # Pre-closing gap: 16:01:00 - 16:01:59 is technically a transition/wait period
+    if dt.time(16, 1, 0) <= current_time < dt.time(16, 2, 0):
+        return False
+
+    return True
 
 @dataclass(frozen=True)
 class Fees:
-    buy_pct: float = 0.0019 # Conservative default
-    sell_pct: float = 0.0029 # Conservative default
-    slippage_pct: float = 0.001 # 0.1% slippage
+    buy_pct: float = 0.0019
+    sell_pct: float = 0.0029
+    slippage_pct: float = 0.001
 
     @property
     def total_sell_pct(self) -> float:
-        """Alias for engine compatibility, including PPh if necessary."""
         return self.sell_pct
 
 def apply_fees_and_slippage(price: float, side: str, fees: Fees) -> float:
