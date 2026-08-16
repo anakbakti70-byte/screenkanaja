@@ -9,6 +9,39 @@ from app.indicators.ta import calculate_rsi, calculate_macd, calculate_ao
 router = APIRouter()
 provider = YFinanceProvider()
 
+@router.get("/ipo")
+async def get_recent_ipos():
+    """Returns 10 newest listed stocks."""
+    try:
+        response = supabase.table("stock_master") \
+            .select("*") \
+            .order("listing_date", desc=True) \
+            .limit(10) \
+            .execute()
+        return response.data
+    except Exception as e:
+        print(f"IPO API ERROR: {e}")
+        return []
+
+@router.get("/losers")
+async def get_top_losers():
+    """Returns stocks with lowest prices or potential losers for divergence hunting."""
+    try:
+        # Fetch active stocks under 1000, ordered by those recently updated
+        # In a real scenario, we'd compare vs prev_close.
+        # Here we prioritize stocks under 1000 that might be hitting new lows.
+        response = supabase.table("stock_master") \
+            .select("*") \
+            .lte("last_price", 1000) \
+            .eq("is_active", True) \
+            .order("last_price", desc=False) \
+            .limit(10) \
+            .execute()
+        return response.data
+    except Exception as e:
+        print(f"LOSERS API ERROR: {e}")
+        return []
+
 @router.get("/{symbol}/candles")
 async def get_stock_candles(symbol: str, timeframe: str = "1d"):
     """
@@ -75,5 +108,6 @@ async def get_stocks(symbol: Optional[str] = None):
             query = query.ilike("symbol", f"%{symbol}%")
         response = query.execute()
         return response.data
-    except:
+    except Exception as e:
+        print(f"STOCKS API ERROR: {e}")
         return []

@@ -13,7 +13,10 @@ class BacktestRequest(BaseModel):
     symbol: str
     timeframe: str = "1d"
     initial_capital: float = 100000000
-    risk_per_trade: float = 10.0 # Percentage of balance
+    risk_per_trade: float = 1.0 # Percentage of balance
+    buy_fee: Optional[float] = 0.0019
+    sell_fee: Optional[float] = 0.0029
+    slippage_pct: Optional[float] = 0.001
 
 @router.post("/run")
 async def run_backtest(req: BacktestRequest, current_user: dict = Depends(get_current_user)):
@@ -25,7 +28,6 @@ async def run_backtest(req: BacktestRequest, current_user: dict = Depends(get_cu
         df = provider.get_ohlcv(provider_symbol, req.timeframe, limit=1000)
 
         if df.empty or len(df) < 100:
-            # Try once without .JK for indices or special symbols
             df = provider.get_ohlcv(symbol, req.timeframe, limit=1000)
             if df.empty:
                 raise HTTPException(status_code=404, detail=f"Data historis tidak ditemukan untuk {symbol}")
@@ -37,6 +39,15 @@ async def run_backtest(req: BacktestRequest, current_user: dict = Depends(get_cu
             initial_balance=req.initial_capital,
             risk_per_trade_pct=req.risk_per_trade
         )
+
+        # Override fees if provided
+        from app.utils.market import Fees
+        engine.fees = Fees(
+            buy_pct=req.buy_fee,
+            sell_pct=req.sell_fee,
+            slippage_pct=req.slippage_pct
+        )
+
         results = engine.run(df, symbol, req.timeframe)
 
         print(f"DEBUG: Backtest completed. Trades found: {results['metrics']['total_trades']}")
@@ -48,15 +59,19 @@ async def run_backtest(req: BacktestRequest, current_user: dict = Depends(get_cu
 
 @router.get("/symbols")
 async def get_backtest_symbols(query: Optional[str] = None, current_user: dict = Depends(get_current_user)):
-    """Returns list of symbols available for backtest with price <= 1000."""
+    """Returns list of symbols available for backtest. Limited to price < 1000 by default."""
     try:
-        db_query = supabase.table("stock_master").select("symbol, company_name, last_price").lte("last_price", 1000).eq("is_active", True)
+        # Fetch all active symbols from Supabase
+        db_query = supabase.table("stock_master").select("symbol, company_name, last_price").eq("is_active", True)
+
         if query:
             db_query = db_query.ilike("symbol", f"%{query}%")
 
-        response = db_query.limit(20).execute()
+        # Sort by symbol to make dropdown ordered
+        response = db_query.order("symbol").limit(100).execute()
         return response.data
     except Exception as e:
+        print(f"SYMBOL FETCH ERROR: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/balance")

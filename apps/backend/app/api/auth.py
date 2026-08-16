@@ -102,4 +102,5 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     except Exception as e:
         print("CRITICAL LOGIN FAILURE:")
         traceback.print_exc()
-        return JSONResponse(status_code=500, content={"detail": f"Server Error: {str(e)}"})
+        # Log to file if needed
+        return JSONResponse(status_code=500, content={"detail": f"Server Error: {str(e)}", "trace": traceback.format_exc()})

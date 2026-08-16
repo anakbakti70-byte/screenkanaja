@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
-import { Search, Zap, TrendingUp, Calendar, Filter, Info, X } from 'lucide-react';
+import { Search, Zap, TrendingUp, Calendar, Filter, X, Loader2, ArrowDownCircle, Info } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../hooks/AuthContext';
-import { StockChart } from '../components/charts/StockChart';
+import { PatternChart } from '../components/charts/PatternChart';
 
 const StockList: React.FC = () => {
     const { token } = useAuth();
     const [allStocks, setAllStocks] = useState<any[]>([]);
     const [recentIpos, setRecentIpos] = useState<any[]>([]);
+    const [topLosers, setTopLosers] = useState<any[]>([]);
     const [topPerformers, setTopPerformers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
@@ -19,19 +20,16 @@ const StockList: React.FC = () => {
     const fetchData = async () => {
         try {
             setLoading(true);
-            const [stocksRes, ipoRes, topRes] = await Promise.all([
-                axios.get('/api/stocks/', { headers: { Authorization: `Bearer ${token}` } }),
-                axios.get('/api/stocks/ipo', { headers: { Authorization: `Bearer ${token}` } }),
-                axios.get('/api/scanner/results', {
-                    params: { limit: 5, sort_by: 'score', latest_only: true },
-                    headers: { Authorization: `Bearer ${token}` }
-                })
-            ]);
-            setAllStocks(stocksRes.data);
-            setRecentIpos(ipoRes.data);
-            setTopPerformers(topRes.data);
+            const stocksReq = axios.get('/api/stocks/', { headers: { Authorization: `Bearer ${token}` } }).then(res => setAllStocks(res.data));
+            const ipoReq = axios.get('/api/stocks/ipo', { headers: { Authorization: `Bearer ${token}` } }).then(res => setRecentIpos(res.data));
+            const losersReq = axios.get('/api/stocks/losers', { headers: { Authorization: `Bearer ${token}` } }).then(res => setTopLosers(res.data));
+            const topReq = axios.get('/api/scanner/results', {
+                params: { limit: 5, sort_by: 'score', latest_only: true },
+                headers: { Authorization: `Bearer ${token}` }
+            }).then(res => setTopPerformers(res.data));
+            await Promise.allSettled([stocksReq, ipoReq, losersReq, topReq]);
         } catch (err) {
-            console.error("Failed to fetch stock list data", err);
+            console.error(err);
         } finally {
             setLoading(false);
         }
@@ -47,21 +45,14 @@ const StockList: React.FC = () => {
                         headers: { Authorization: `Bearer ${token}` }
                     });
                     setChartData(res.data);
-                } catch (err) {
-                    console.error(err);
-                } finally {
-                    setChartLoading(false);
-                }
+                } catch (err) { console.error(err); }
+                finally { setChartLoading(false); }
             };
             fetchChart();
-        } else {
-            setChartData(null);
         }
     }, [selectedSymbol, token]);
 
-    useEffect(() => {
-        fetchData();
-    }, []);
+    useEffect(() => { fetchData(); }, []);
 
     const filteredStocks = allStocks.filter(s =>
         s.symbol.toLowerCase().includes(search.toLowerCase()) ||
@@ -70,112 +61,146 @@ const StockList: React.FC = () => {
 
     return (
         <Layout>
-            <div className="p-8 max-w-7xl mx-auto space-y-8">
+            <div className="p-8 max-w-7xl mx-auto space-y-8 pb-20">
                 <header>
-                    <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Daftar Saham IDX</h1>
-                    <p className="text-slate-400">Database saham real-time di bawah Rp 1.000.</p>
+                    <h1 className="text-4xl font-black text-white mb-2 tracking-tighter uppercase">Market Explorer</h1>
+                    <p className="text-slate-400 text-sm font-medium uppercase tracking-[0.2em]">Monitoring Emiten & Deteksi Setup Real-time</p>
                 </header>
 
-                {/* Analysis Area for Selected Stock */}
                 {selectedSymbol && (
                     <div className="animate-in fade-in slide-in-from-top-4 duration-500 space-y-4">
-                        <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-3xl">
+                        <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-5 rounded-[2rem] shadow-2xl">
                             <div className="flex items-center gap-4">
-                                <div className="p-3 bg-blue-500/10 rounded-2xl">
-                                    <TrendingUp className="w-6 h-6 text-blue-500" />
-                                </div>
+                                <div className="p-3 bg-blue-600/20 rounded-2xl text-blue-500"><TrendingUp className="w-6 h-6" /></div>
                                 <div>
-                                    <h2 className="text-xl font-black text-white">{selectedSymbol}</h2>
-                                    <p className="text-[10px] text-slate-500 uppercase tracking-widest">Real-time IDX Interactive Chart</p>
+                                    <div className="flex items-center gap-2">
+                                        <h2 className="text-2xl font-black text-white uppercase">{selectedSymbol}</h2>
+                                        <div className="group relative">
+                                            <Info className="w-4 h-4 text-slate-500 cursor-help" />
+                                            <div className="absolute left-0 top-6 w-64 p-3 bg-slate-800 text-[10px] text-slate-200 rounded-xl hidden group-hover:block z-50 shadow-2xl border border-slate-700">
+                                                Grafik interaktif yang menampilkan pergerakan harga historis, indikator AO, dan plotting otomatis Fibonacci untuk strategi CTG.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 font-bold uppercase mt-1">Analisis Teknikal & Struktur Market</p>
                                 </div>
                             </div>
-                            <button
-                                onClick={() => setSelectedSymbol(null)}
-                                className="p-2 bg-slate-800 hover:bg-red-600 text-white rounded-full transition-all"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
+                            <button onClick={() => setSelectedSymbol(null)} className="p-3 bg-slate-800 hover:bg-red-600 text-white rounded-full transition-all"><X className="w-5 h-5" /></button>
                         </div>
-                        <div className="h-[600px] shadow-2xl relative">
-                            {chartLoading && (
-                                <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm">
-                                    <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
-                                </div>
-                            )}
+                        <div className="h-[600px] shadow-2xl relative bg-slate-900 rounded-[2.5rem] overflow-hidden border border-slate-800">
+                            {chartLoading && <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm"><Loader2 className="w-12 h-12 text-blue-500 animate-spin" /></div>}
                             <PatternChart data={chartData} />
                         </div>
                     </div>
                 )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
-                    {/* Left Sidebar */}
-                    <div className="lg:col-span-1 space-y-6">
-                        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
-                            <div className="flex items-center gap-2 mb-6 text-amber-500">
-                                <Zap className="w-5 h-5 fill-current" />
-                                <h2 className="font-bold text-white uppercase tracking-wider text-xs">Top Setup Today</h2>
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                    <div className="lg:col-span-3 space-y-6">
+                        {/* Panel: Top Setup */}
+                        <div className="bg-slate-900 border border-slate-800 rounded-[2rem] p-6 shadow-xl border-t-2 border-t-amber-500/20">
+                            <div className="flex items-center justify-between mb-6">
+                                <div className="flex items-center gap-2 text-amber-500">
+                                    <Zap className="w-5 h-5 fill-current" />
+                                    <h2 className="font-black text-white uppercase tracking-widest text-[10px]">Top Setup</h2>
+                                </div>
+                                <div className="group relative">
+                                    <Info className="w-3.5 h-3.5 text-slate-600 cursor-help" />
+                                    <div className="absolute left-0 top-5 w-48 p-2 bg-slate-800 text-[9px] text-slate-300 rounded-lg hidden group-hover:block z-50 border border-slate-700">
+                                        Saham dengan skor divergensi (RSI/MACD/AO) tertinggi hari ini yang siap untuk konfirmasi entri.
+                                    </div>
+                                </div>
                             </div>
-                            <div className="space-y-4">
-                                {topPerformers.length === 0 ? (
-                                    <p className="text-xs text-slate-500 italic">No setups found.</p>
-                                ) : (
+                            <div className="space-y-3">
+                                {topPerformers.length === 0 ? <p className="text-[10px] text-slate-600 py-4 text-center italic">Belum ada setup</p> :
                                     topPerformers.map((stock, i) => (
-                                        <div key={i} className="flex justify-between items-center group cursor-pointer hover:bg-slate-800/50 p-2 rounded-xl transition-all" onClick={() => setSelectedSymbol(stock.symbol)}>
+                                        <div key={i} className="flex justify-between items-center group cursor-pointer hover:bg-slate-800/80 p-3 rounded-2xl transition-all" onClick={() => setSelectedSymbol(stock.symbol)}>
                                             <div>
-                                                <div className="text-sm font-bold text-white group-hover:text-blue-400">{stock.symbol}</div>
-                                                <div className="text-[9px] text-slate-500 uppercase">{stock.method?.split(' ')[0]}</div>
+                                                <div className="text-sm font-black text-white group-hover:text-blue-400">{stock.symbol}</div>
+                                                <div className="text-[8px] text-slate-500 font-bold uppercase">{stock.method?.split(' ')[0]}</div>
                                             </div>
-                                            <div className="text-xs font-bold text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-lg">{stock.score?.toFixed(0)}</div>
+                                            <div className="text-xs font-black text-emerald-500 bg-emerald-500/10 px-2.5 py-1 rounded-xl">+{stock.score?.toFixed(0)}</div>
                                         </div>
-                                    ))
-                                )}
+                                    ))}
                             </div>
                         </div>
 
-                        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
-                            <div className="flex items-center gap-2 mb-6 text-emerald-500">
-                                <TrendingUp className="w-5 h-5" />
-                                <h2 className="font-bold text-white uppercase tracking-wider text-xs">Recent IPOs</h2>
+                        {/* Panel: Potential Reversals */}
+                        <div className="bg-slate-900 border border-slate-800 rounded-[2rem] p-6 shadow-xl border-t-2 border-t-red-500/20">
+                            <div className="flex items-center justify-between mb-6">
+                                <div className="flex items-center gap-2 text-red-500">
+                                    <ArrowDownCircle className="w-5 h-5" />
+                                    <h2 className="font-black text-white uppercase tracking-widest text-[10px]">Reversals</h2>
+                                </div>
+                                <div className="group relative">
+                                    <Info className="w-3.5 h-3.5 text-slate-600 cursor-help" />
+                                    <div className="absolute left-0 top-5 w-48 p-2 bg-slate-800 text-[9px] text-slate-300 rounded-lg hidden group-hover:block z-50 border border-slate-700">
+                                        Saham Top Loser yang sedang diskon tajam, menjadi target utama untuk mencari pola Bullish Divergence manual.
+                                    </div>
+                                </div>
                             </div>
-                            <div className="space-y-4">
-                                {recentIpos.length === 0 ? (
-                                    <p className="text-xs text-slate-500 italic">No IPOs found.</p>
-                                ) : (
-                                    recentIpos.map((ipo, i) => (
-                                        <div key={i} className="group cursor-pointer hover:bg-slate-800/50 p-2 rounded-xl transition-all" onClick={() => setSelectedSymbol(ipo.symbol)}>
-                                            <div className="text-xs font-bold text-white group-hover:text-blue-400">{ipo.symbol}</div>
-                                            <div className="text-[9px] text-slate-500 truncate mb-1">{ipo.company_name}</div>
-                                            <div className="text-[9px] font-bold text-emerald-500 flex items-center gap-1 uppercase">
-                                                <Calendar className="w-3 h-3" />
-                                                {ipo.listing_date ? new Date(ipo.listing_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : '-'}
+                            <div className="space-y-3">
+                                {topLosers.length === 0 ? <p className="text-[10px] text-slate-600 py-4 text-center italic">Tidak ada kandidat</p> :
+                                    topLosers.map((stock, i) => (
+                                        <div key={i} className="group cursor-pointer hover:bg-slate-800/80 p-3 rounded-2xl transition-all" onClick={() => setSelectedSymbol(stock.symbol)}>
+                                            <div className="flex justify-between items-center mb-0.5">
+                                                <div className="text-sm font-black text-white group-hover:text-red-400">{stock.symbol}</div>
+                                                <div className="text-[10px] font-black text-slate-400 tracking-tighter">Rp {stock.last_price}</div>
                                             </div>
+                                            <div className="text-[8px] text-slate-600 font-bold truncate uppercase">{stock.company_name}</div>
                                         </div>
-                                    ))
-                                )}
+                                    ))}
+                            </div>
+                        </div>
+
+                        {/* Panel: Recent IPOs */}
+                        <div className="bg-slate-900 border border-slate-800 rounded-[2rem] p-6 shadow-xl border-t-2 border-t-blue-500/20">
+                            <div className="flex items-center justify-between mb-6">
+                                <div className="flex items-center gap-2 text-blue-500">
+                                    <TrendingUp className="w-5 h-5" />
+                                    <h2 className="font-black text-white uppercase tracking-widest text-[10px]">Recent IPO</h2>
+                                </div>
+                                <div className="group relative">
+                                    <Info className="w-3.5 h-3.5 text-slate-600 cursor-help" />
+                                    <div className="absolute left-0 top-5 w-48 p-2 bg-slate-800 text-[9px] text-slate-300 rounded-lg hidden group-hover:block z-50 border border-slate-700">
+                                        Emiten yang baru melantai di bursa. Penting untuk dipantau karena sering memiliki volatilitas tinggi.
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="space-y-3">
+                                {recentIpos.map((ipo, i) => (
+                                    <div key={i} className="group cursor-pointer hover:bg-slate-800/80 p-3 rounded-2xl transition-all" onClick={() => setSelectedSymbol(ipo.symbol)}>
+                                        <div className="text-sm font-black text-white group-hover:text-blue-400">{ipo.symbol}</div>
+                                        <div className="text-[8px] text-slate-500 font-bold truncate mb-1 uppercase">{ipo.company_name}</div>
+                                        <div className="text-[8px] font-black text-emerald-500 flex items-center gap-1 uppercase tracking-tighter">
+                                            <Calendar className="w-2.5 h-2.5" /> {ipo.listing_date ? new Date(ipo.listing_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : 'Baru'}
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     </div>
 
-                    {/* Main List */}
-                    <div className="lg:col-span-3 space-y-6">
-                        <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-                            <div className="p-6 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                <div className="flex items-center gap-3">
-                                    <Filter className="w-5 h-5 text-blue-500" />
-                                    <h2 className="text-lg font-bold text-white">Market Universe</h2>
-                                    <span className="bg-blue-600/20 text-blue-500 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-tighter">
-                                        {filteredStocks.length} Saham Terdaftar
-                                    </span>
+                    <div className="lg:col-span-9 space-y-6">
+                        <div className="bg-slate-900 border border-slate-800 rounded-[2.5rem] overflow-hidden shadow-2xl">
+                            <div className="p-8 border-b border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-slate-950/20">
+                                <div className="flex items-center gap-4">
+                                    <div className="p-3 bg-slate-800 rounded-2xl text-blue-500"><Filter className="w-6 h-6" /></div>
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <h2 className="text-xl font-black text-white uppercase tracking-tighter">Market Universe</h2>
+                                            <div className="group relative">
+                                                <Info className="w-4 h-4 text-slate-600 cursor-help" />
+                                                <div className="absolute left-0 top-6 w-64 p-3 bg-slate-800 text-[10px] text-slate-200 rounded-xl hidden group-hover:block z-50 shadow-2xl border border-slate-700">
+                                                    Daftar seluruh emiten IDX di bawah Rp 1.000 yang dipantau sistem. Harga diperbarui secara otomatis dari database.
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mt-1">{filteredStocks.length} Saham Terdaftar</p>
+                                    </div>
                                 </div>
                                 <div className="relative">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                                    <input
-                                        type="text"
-                                        value={search}
-                                        onChange={(e) => setSearch(e.target.value)}
-                                        placeholder="Cari kode atau nama..."
-                                        className="bg-slate-950 border border-slate-800 text-sm text-slate-300 pl-10 pr-4 py-2.5 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 transition-all min-w-[280px]"
-                                    />
+                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                                    <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode atau nama emiten..." className="bg-slate-950 border border-slate-800 text-sm text-white pl-12 pr-6 py-4 rounded-[1.5rem] outline-none focus:ring-2 focus:ring-blue-500 transition-all min-w-[350px] font-bold" />
                                 </div>
                             </div>
 
@@ -183,54 +208,31 @@ const StockList: React.FC = () => {
                                 <table className="w-full text-left">
                                     <thead>
                                         <tr className="text-slate-500 text-[10px] uppercase tracking-widest bg-slate-950/50 font-black">
-                                            <th className="px-6 py-5">Emiten</th>
-                                            <th className="px-6 py-5">Nama Perusahaan</th>
-                                            <th className="px-6 py-5">Sektor</th>
-                                            <th className="px-6 py-5">Harga</th>
-                                            <th className="px-6 py-5">Status</th>
+                                            <th className="px-10 py-6">Emiten</th>
+                                            <th className="px-10 py-6">Perusahaan / Sektor</th>
+                                            <th className="px-10 py-6">Harga</th>
+                                            <th className="px-10 py-6">Aksi</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-800">
-                                        {loading ? (
-                                            <tr>
-                                                <td colSpan={5} className="px-6 py-20 text-center">
-                                                    <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                                                </td>
-                                            </tr>
-                                        ) : filteredStocks.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={5} className="px-6 py-20 text-center text-slate-500 italic">Emiten tidak ditemukan.</td>
-                                            </tr>
-                                        ) : (
+                                        {loading ? <tr><td colSpan={4} className="px-10 py-32 text-center"><div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div><p className="text-[10px] font-black text-slate-600 uppercase">Sinkronisasi Database...</p></td></tr> :
                                             filteredStocks.map((stock, i) => (
-                                                <tr
-                                                    key={i}
-                                                    className={`hover:bg-slate-800/40 transition-all group cursor-pointer ${selectedSymbol === stock.symbol ? 'bg-blue-600/10 border-l-4 border-l-blue-500' : ''}`}
-                                                    onClick={() => {
-                                                        setSelectedSymbol(stock.symbol);
-                                                        window.scrollTo({ top: 100, behavior: 'smooth' });
-                                                    }}
-                                                >
-                                                    <td className="px-6 py-5 font-black text-white text-lg">
-                                                        {stock.symbol}
+                                                <tr key={i} className="hover:bg-blue-600/5 transition-all group cursor-pointer" onClick={() => { setSelectedSymbol(stock.symbol); window.scrollTo({ top: 100, behavior: 'smooth' }); }}>
+                                                    <td className="px-10 py-8">
+                                                        <div className="font-black text-white text-2xl group-hover:text-blue-400 transition-colors">{stock.symbol}</div>
+                                                        <span className="text-[9px] font-black px-2 py-0.5 bg-slate-800 text-slate-500 rounded uppercase mt-2 inline-block">IDX Equity</span>
                                                     </td>
-                                                    <td className="px-6 py-5">
-                                                        <div className="text-xs text-slate-300 font-medium truncate max-w-[200px]">{stock.company_name || stock.name}</div>
+                                                    <td className="px-10 py-8">
+                                                        <div className="text-xs text-slate-300 font-black uppercase truncate max-w-[250px] mb-2">{stock.company_name || stock.name}</div>
+                                                        <div className="text-[9px] text-blue-400 font-black bg-blue-400/5 px-2.5 py-1 rounded-lg inline-block uppercase">{stock.sector || 'N/A'}</div>
                                                     </td>
-                                                    <td className="px-6 py-5">
-                                                        <div className="text-[10px] text-blue-400 font-bold bg-blue-400/5 px-2 py-0.5 rounded inline-block">{stock.sector || 'N/A'}</div>
+                                                    <td className="px-10 py-8">
+                                                        <div className="text-2xl font-black text-slate-100 tracking-tighter">Rp {stock.last_price?.toLocaleString() || '-'}</div>
+                                                        <div className="flex items-center gap-1.5 mt-2"><div className={`w-1.5 h-1.5 rounded-full ${stock.is_active ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div><span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Real-time</span></div>
                                                     </td>
-                                                    <td className="px-6 py-5 text-sm font-bold text-slate-200">
-                                                        Rp {stock.last_price?.toLocaleString() || '-'}
-                                                    </td>
-                                                    <td className="px-6 py-5">
-                                                        <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-widest uppercase ${stock.is_active ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
-                                                            {stock.is_active ? 'ACTIVE' : 'INACTIVE'}
-                                                        </span>
-                                                    </td>
+                                                    <td className="px-10 py-8"><button className="px-6 py-2.5 bg-slate-800 group-hover:bg-blue-600 text-white text-[10px] font-black rounded-xl transition-all uppercase tracking-widest shadow-lg">Buka Grafik</button></td>
                                                 </tr>
-                                            ))
-                                        )}
+                                            ))}
                                     </tbody>
                                 </table>
                             </div>
