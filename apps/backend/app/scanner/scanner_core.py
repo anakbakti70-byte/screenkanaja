@@ -155,6 +155,7 @@ class ScannerEngine:
             HiddenBullishDivergenceStrategy(None)
         ]
         self.universe_service = UniverseService(UniverseRepository())
+        self._last_state_hash = {} # Cache local untuk mendeteksi perubahan harga/status
 
     async def run_scan(self, market: str = "idx", timeframe: str = "1d"):
         tickers = self.universe_service.get_active_stocks()
@@ -162,10 +163,10 @@ class ScannerEngine:
 
         print(f"🔍 SCANNING MARKET ({timeframe}) - 1s ACTIONABLE CYCLE...")
 
-        # 1. Fetch active signals from DB for re-validation and confirmation tracking
+        # 1. Fetch active signals from DB
         active_db_signals = await self._fetch_active_signals(market, timeframe)
 
-        # 2. Run detection & validation on all tickers
+        # 2. Run detection & validation
         all_results = []
         loop = asyncio.get_event_loop()
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -177,18 +178,45 @@ class ScannerEngine:
             for res in scan_results:
                 if res: all_results.extend(res)
 
-        # 3. Cleanup DB: Mark signals that disappeared or turned STALE/INVALID
-        await self._sync_db_states(market, timeframe, all_results)
+        # 3. Log Perubahan Detail (Old vs New Data)
+        for r in all_results:
+            key = f"{r.symbol}:{r.strategy_name}"
+            current_price = r.metadata.get("current_price", 0)
 
-        # 4. Background Broker Execution: Sync SL/TP for all active sessions
-        # Ini memastikan SL/TP terjual otomatis meskipun user tidak membuka browser.
+            # State yang dipantau: Status dan Harga Running
+            current_state_vals = (r.status, current_price)
+            prev_state_vals = self._last_state_hash.get(key)
+
+            if prev_state_vals != current_state_vals:
+                if prev_state_vals:
+                    old_status, old_price = prev_state_vals
+
+                    # Hanya cetak jika status berubah ATAU harga berubah
+                    status_changed = old_status != r.status
+                    price_changed = old_price != current_price
+
+                    if status_changed or price_changed:
+                        ts = datetime.now().strftime('%H:%M:%S')
+
+                        # Format Log Perubahan
+                        status_log = f"{old_status} -> {r.status}" if status_changed else r.status
+                        price_log = f"Rp {old_price:,.0f} -> Rp {current_price:,.0f}" if price_changed else f"Rp {current_price:,.0f}"
+
+                        print(f"✨ [{ts}] {r.symbol:5} | {r.strategy_name:25} | {status_log:25} | {price_log}")
+                else:
+                    # Log Sinyal Baru Ditemukan
+                    ts = datetime.now().strftime('%H:%M:%S')
+                    print(f"🚀 [{ts}] NEW SETUP: {r.symbol:5} | {r.strategy_name:25} | Status: {r.status:10} | Price: Rp {current_price:,.0f}")
+
+                self._last_state_hash[key] = current_state_vals
+
+        # 4. Cleanup & Sync
+        await self._sync_db_states(market, timeframe, all_results)
         await self._run_background_broker_sync()
 
-        # 5. Save results (Upsert all)
         if all_results:
             await self._save_results(all_results, market)
 
-        # 5. Return only READY/VALID for the active screening dashboard
         return [r for r in all_results if r.status in (SignalStatus.READY, SignalStatus.VALID)]
 
     async def _fetch_active_signals(self, market: str, timeframe: str) -> Dict[str, List[Dict]]:
