@@ -36,8 +36,8 @@ import pandas as pd
 import numpy as np
 from typing import Dict, Any
 
-from app.market_structure.pivots import PivotDetector
-from app.market_structure.movements import MovementClassifier
+from app.scanner.scanner_core import PivotDetector
+from app.scanner.scanner_core import MovementClassifier
 from app.indicators.ta import calculate_rsi, calculate_macd, calculate_ao
 from app.strategies.technical_logic import (
     BullishDivergenceStrategy,
@@ -141,7 +141,16 @@ class BacktestEngineV4:
                 window_df.attrs["symbol"] = symbol
                 window_df.attrs["timeframe"] = timeframe
 
+                # ANTI-LOOKAHEAD FOR PREDICTION (§1):
+                # Gunakan data HANYA sampai bar i untuk memprediksi bar i+1.
+                window_df = df.iloc[: i + 1].copy()
+                window_df.attrs["symbol"] = symbol
+                window_df.attrs["timeframe"] = timeframe
+
+                # Sesuai logika Prediksi: deteksi pola pada data yang sudah ada
+                # untuk memprediksi arah candle yang sedang berjalan/berikutnya.
                 pivots = self.pivot_detector.detect_pivots(window_df)
+
                 if not pivots.empty:
                     pivots = self.movement_classifier.classify_movements(pivots)
                     pivots = self.movement_classifier.label_5_movements(pivots)

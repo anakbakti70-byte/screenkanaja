@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import datetime, timezone
 from .base import BaseDataProvider
 from ..core.database import supabase
-from ..core.market_utils import is_idx_market_open
 
 class YFinanceProvider(BaseDataProvider):
     def __init__(self, cache_expiry_intraday=300):
@@ -16,102 +15,106 @@ class YFinanceProvider(BaseDataProvider):
         start: datetime = None, 
         end: datetime = None,
         limit: int = None,
-        use_cache: bool = False
+        use_cache: bool = True
     ) -> pd.DataFrame:
         """
-        Priority Strategy:
-        - MARKET OPEN: Fetch REALTIME from Yahoo (1s accuracy) -> Update Cache -> Return.
-        - MARKET CLOSED: Fetch from DB CACHE (data from last close) -> Return.
+        HYBRID DATA STRATEGY:
+        1. Market Open: API-FIRST (Real-time) -> Save to DB Cache.
+        2. Market Closed: DB-FIRST (Static) -> Fallback to API if DB empty.
         """
         clean_symbol = symbol.replace(".JK", "").upper()
-        market_is_active = is_idx_market_open()
+        yf_symbol = f"{clean_symbol}.JK"
 
-        # --- PATH A: MARKET IS OPEN (Realtime Mode) ---
-        if market_is_active:
-            print(f"🚀 MARKET OPEN: Fetching 1s REALTIME data for {clean_symbol}...")
-            ticker = yf.Ticker(f"{clean_symbol}.JK")
-            try:
-                period = "2y" if timeframe == "1d" else "1mo"
-                df = ticker.history(period=period, interval=timeframe)
+        from app.scanner.scanner_core import is_idx_market_open
+        market_active = is_idx_market_open()
 
-                if not df.empty:
-                    self._save_to_cache(clean_symbol, timeframe, df)
-                    if limit: return df.tail(limit)
-                    return df
-                print(f"⚠️ Yahoo returned empty for {clean_symbol}, falling back to cache...")
-            except Exception as e:
-                print(f"❌ Realtime Fetch Error for {symbol}: {e}")
+        # --- STEP 1: IF MARKET CLOSED, TRY DB FIRST ---
+        if not market_active and use_cache:
+            db_df = self._fetch_from_db(clean_symbol, timeframe, limit)
+            if not db_df.empty:
+                return db_df
 
-        # --- PATH B: MARKET IS CLOSED OR REALTIME FAILED (Cache Mode) ---
-        if not market_is_active:
-            print(f"😴 MARKET CLOSED: Loading {clean_symbol} data from Database Cache...")
-
+        # --- STEP 2: IF MARKET OPEN (OR DB EMPTY), FETCH FROM API ---
         try:
-            if supabase:
-                query = supabase.table("ohlcv_cache") \
-                    .select("*") \
-                    .eq("symbol", clean_symbol) \
-                    .eq("timeframe", timeframe) \
-                    .order("ts", desc=True)
+            if market_active:
+                print(f"📡 REALTIME API FETCH: {clean_symbol} [{timeframe}]")
 
-                if limit:
-                    query = query.limit(limit)
-                else:
-                    query = query.limit(1000)
+            ticker = yf.Ticker(yf_symbol)
+            period = "2y" if timeframe == "1d" else "1mo"
+            if timeframe in ['1m', '5m', '15m']: period = "5d"
 
-                resp = query.execute()
-                if resp.data:
-                    df_db = pd.DataFrame(resp.data)
-                    df_db['ts'] = pd.to_datetime(df_db['ts'])
-                    df_db = df_db.rename(columns={
-                        'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'
-                    })
-                    df_db = df_db.set_index('ts').sort_index()
-                    return df_db
+            df = ticker.history(period=period, interval=timeframe, auto_adjust=True)
 
-                if not market_is_active:
-                    print(f"❓ No cache found for {clean_symbol} in DB.")
+            if not df.empty:
+                # 1s Real-time Price Injection during market hours
+                if market_active and timeframe == "1d":
+                    try:
+                        lp = ticker.fast_info['lastPrice']
+                        if lp: df.iloc[-1, df.columns.get_loc('Close')] = lp
+                    except: pass
+
+                # --- STEP 3: SYNC TO DATABASE CACHE ---
+                self._save_to_cache(clean_symbol, timeframe, df)
+
+                if limit: return df.tail(limit)
+                return df
+
         except Exception as e:
-            print(f"❌ DB Cache Fetch Error for {symbol}: {e}")
+            if market_active:
+                print(f"⚠️ API Failed for {clean_symbol}: {e}. Trying DB fallback...")
 
-        # --- PATH C: FINAL FALLBACK (Only if market is active but cache and initial fetch failed) ---
-        if market_is_active:
-             # Try one last time without high expectations
-             return pd.DataFrame()
+        # --- STEP 4: FINAL FALLBACK TO DB ---
+        return self._fetch_from_db(clean_symbol, timeframe, limit)
 
+    def _fetch_from_db(self, symbol, timeframe, limit):
+        try:
+            if not supabase: return pd.DataFrame()
+            query = supabase.table("ohlcv_cache") \
+                .select("*") \
+                .eq("symbol", symbol) \
+                .eq("timeframe", timeframe) \
+                .order("ts", desc=True) \
+                .limit(limit or 1000)
+
+            resp = query.execute()
+            if resp.data:
+                df = pd.DataFrame(resp.data)
+                df['ts'] = pd.to_datetime(df['ts'])
+                df = df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
+                return df.set_index('ts').sort_index()
+        except: pass
         return pd.DataFrame()
 
     def _save_to_cache(self, symbol, timeframe, df):
         if not supabase or df.empty: return
 
-        data = []
-        for ts, row in df.iterrows():
-            if pd.isna(row['Close']): continue
+        # Performance: Only save the LATEST bar to DB during high-frequency scans
+        # to prevent Supabase 'Request Rate Limit' or lock contention.
+        # Historical sync happens once a day via sync_universe.py.
+        latest_row = df.iloc[-1]
+        ts = df.index[-1]
 
-            data.append({
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "ts": ts.isoformat(),
-                "open": float(row['Open']),
-                "high": float(row['High']),
-                "low": float(row['Low']),
-                "close": float(row['Close']),
-                "volume": int(row['Volume'])
-            })
+        data = {
+            "symbol": symbol, "timeframe": timeframe, "ts": ts.isoformat(),
+            "open": float(latest_row['Open']), "high": float(latest_row['High']),
+            "low": float(latest_row['Low']), "close": float(latest_row['Close']),
+            "volume": int(latest_row['Volume']),
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
 
         try:
-            chunk_size = 100
-            for i in range(0, len(data), chunk_size):
-                supabase.table("ohlcv_cache").upsert(
-                    data[i:i+chunk_size],
-                    on_conflict="symbol,timeframe,ts"
-                ).execute()
-        except Exception as e:
-            print(f"Error saving cache for {symbol}: {e}")
+            # Atomic upsert for the single latest candle
+            supabase.table("ohlcv_cache").upsert(data, on_conflict="symbol,timeframe,ts").execute()
+
+            # Also update stock_master last_price for the dashboard
+            supabase.table("stock_master").update({
+                "last_price": float(latest_row['Close']),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("symbol", symbol).execute()
+        except: pass
 
     def get_last_price(self, symbol: str) -> float:
-        ticker = yf.Ticker(symbol)
         try:
+            ticker = yf.Ticker(symbol)
             return float(ticker.fast_info['lastPrice'])
-        except:
-            return 0.0
+        except: return 0.0

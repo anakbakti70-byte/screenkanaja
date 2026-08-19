@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, LineStyle, IChartApi, ISeriesApi } from 'lightweight-charts';
+import { createChart, ColorType, LineStyle, IChartApi, ISeriesApi, SeriesMarker } from 'lightweight-charts';
 import { LayoutGrid, BarChart2, Zap, Settings, X, Eye, EyeOff } from 'lucide-react';
 
 interface PatternChartProps {
@@ -14,36 +14,37 @@ export const PatternChart: React.FC<PatternChartProps> = ({ data, metadata, inte
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
     const aoSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const rsiSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+
     const priceLinesRef = useRef<any[]>([]);
+    const extraSeriesRef = useRef<any[]>([]);
+    const lastSymbolRef = useRef<string | null>(null);
 
     const [showVolume, setShowVolume] = useState(true);
     const [showAO, setShowAO] = useState(true);
-    const [layout, setLayout] = useState<'standard' | 'expanded'>('standard');
+    const [showRSI, setShowRSI] = useState(false);
 
+    // --- 1. INITIALIZE BASE CHART ---
     useEffect(() => {
         if (!chartContainerRef.current) return;
 
-        const container = chartContainerRef.current;
-        container.innerHTML = '';
-
-        const chart = createChart(container, {
+        const chart = createChart(chartContainerRef.current, {
             layout: {
                 background: { type: ColorType.Solid, color: '#0f172a' },
                 textColor: '#94a3b8',
                 fontSize: 10,
-                fontFamily: 'Inter, sans-serif'
+                fontFamily: 'Inter, system-ui, sans-serif'
             },
             grid: {
-                vertLines: { color: 'rgba(51, 65, 85, 0.1)', style: LineStyle.Dotted },
-                horzLines: { color: 'rgba(51, 65, 85, 0.1)', style: LineStyle.Dotted },
+                vertLines: { color: 'rgba(30, 41, 59, 0.1)', style: LineStyle.Dotted },
+                horzLines: { color: 'rgba(30, 41, 59, 0.1)', style: LineStyle.Dotted },
             },
-            width: container.clientWidth,
-            height: 600,
+            width: chartContainerRef.current.clientWidth,
+            height: chartContainerRef.current.clientHeight || 600,
             timeScale: {
                 timeVisible: true,
-                secondsVisible: false,
                 borderColor: '#1e293b',
-                barSpacing: 6
+                barSpacing: 10,
             },
             rightPriceScale: {
                 borderColor: '#1e293b',
@@ -54,156 +55,176 @@ export const PatternChart: React.FC<PatternChartProps> = ({ data, metadata, inte
 
         chartRef.current = chart;
 
-        // 1. Candle Series (Main Pane)
-        const candlestickSeries = chart.addCandlestickSeries({
-            upColor: '#10b981', downColor: '#ef4444', borderVisible: true,
-            wickUpColor: '#10b981', wickDownColor: '#ef4444', borderColor: '#1e293b'
+        candleSeriesRef.current = chart.addCandlestickSeries({
+            upColor: '#10b981', downColor: '#ef4444', borderVisible: false,
+            wickUpColor: '#10b981', wickDownColor: '#ef4444'
         });
-        candleSeriesRef.current = candlestickSeries;
 
-        // 2. Volume Series (Overlay at bottom of Main Pane)
-        const volumeSeries = chart.addHistogramSeries({
+        volumeSeriesRef.current = chart.addHistogramSeries({
             priceFormat: { type: 'volume' },
             priceScaleId: 'volume-scale',
         });
-        volumeSeriesRef.current = volumeSeries;
-
         chart.priceScale('volume-scale').applyOptions({
-            scaleMargins: { top: 0.8, bottom: 0 },
-            visible: showVolume
+            scaleMargins: { top: 0.82, bottom: 0 },
+            visible: true
         });
 
-        // 3. Awesome Oscillator Series (Separate bottom Pane)
-        const aoSeries = chart.addLineSeries({
+        aoSeriesRef.current = chart.addLineSeries({
             color: '#22d3ee', lineWidth: 2, title: 'AO', priceScaleId: 'ao-scale'
         });
-        aoSeriesRef.current = aoSeries;
-
         chart.priceScale('ao-scale').applyOptions({
-            scaleMargins: { top: 0.85, bottom: 0.05 },
+            scaleMargins: { top: 0.85, bottom: 0.02 },
             borderVisible: false,
-            visible: showAO
+            visible: true
         });
 
-        const handleResize = () => chart.applyOptions({ width: container.clientWidth });
+        rsiSeriesRef.current = chart.addLineSeries({
+            color: '#fbbf24', lineWidth: 2, title: 'RSI', priceScaleId: 'rsi-scale'
+        });
+        chart.priceScale('rsi-scale').applyOptions({
+            scaleMargins: { top: 0.85, bottom: 0.02 },
+            borderVisible: false,
+            visible: false
+        });
+
+        const handleResize = () => {
+            if (chartContainerRef.current && chartRef.current) {
+                chartRef.current.applyOptions({
+                    width: chartContainerRef.current.clientWidth,
+                    height: chartContainerRef.current.clientHeight
+                });
+            }
+        };
         window.addEventListener('resize', handleResize);
 
         return () => {
             window.removeEventListener('resize', handleResize);
             chart.remove();
         };
-    }, [showVolume, showAO]); // Re-create if visibility changes to adjust margins
+    }, []);
 
+    // --- 2. UPDATE VISIBILITY (LIVE TOGGLE) ---
+    useEffect(() => {
+        if (!chartRef.current) return;
+        chartRef.current.priceScale('volume-scale').applyOptions({ visible: showVolume });
+        chartRef.current.priceScale('ao-scale').applyOptions({ visible: showAO });
+        chartRef.current.priceScale('rsi-scale').applyOptions({ visible: showRSI });
+    }, [showVolume, showAO, showRSI]);
+
+    // --- 3. SYNC DATA & METADATA ---
     useEffect(() => {
         const candles = data?.history_candles || data?.candles;
+        if (!candleSeriesRef.current || !data || !candles || candles.length === 0) return;
 
-        if (!candleSeriesRef.current || !volumeSeriesRef.current || !aoSeriesRef.current || !data || !candles) {
-            return;
-        }
+        const currentSymbol = metadata?.symbol || data?.symbol;
+        const isNewSymbol = lastSymbolRef.current !== currentSymbol;
+        lastSymbolRef.current = currentSymbol;
 
         const parseTime = (t: any) => typeof t === 'string' ? Math.floor(new Date(t).getTime() / 1000) : t;
 
-        // Clean & Format Data
-        const formattedCandles = candles.map((c: any) => ({
+        // Auto-Indicator Switching (Only on first load of a signal)
+        if (isNewSymbol && metadata?.metadata?.indicator) {
+            if (metadata.metadata.indicator === 'RSI') { setShowRSI(true); setShowAO(false); }
+            else { setShowAO(true); setShowRSI(false); }
+        }
+
+        // Set Main Candle Data
+        const formatted = candles.map((c: any) => ({
             time: parseTime(c.time),
             open: c.open, high: c.high, low: c.low, close: c.close
-        })).filter((v:any, i:any, a:any) => a.findIndex((t:any) => t.time === v.time) === i).sort((a:any, b:any) => a.time - b.time);
+        })).sort((a:any, b:any) => a.time - b.time);
 
-        const formattedVolume = candles.map((c: any) => ({
-            time: parseTime(c.time),
-            value: c.volume,
-            color: c.close >= c.open ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'
-        })).filter((v:any, i:any, a:any) => a.findIndex((t:any) => t.time === v.time) === i).sort((a:any, b:any) => a.time - b.time);
+        candleSeriesRef.current.setData(formatted);
 
-        const formattedAO = candles.map((c: any) => ({
-            time: parseTime(c.time),
-            value: typeof c.ao === 'number' ? c.ao : 0
-        })).filter((v:any, i:any, a:any) => a.findIndex((t:any) => t.time === v.time) === i).sort((a:any, b:any) => a.time - b.time);
+        // Set Indicators
+        if (volumeSeriesRef.current) {
+            volumeSeriesRef.current.setData(candles.map((c: any) => ({
+                time: parseTime(c.time),
+                value: c.volume,
+                color: c.close >= c.open ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'
+            })));
+        }
 
-        candleSeriesRef.current.setData(formattedCandles);
-        if (showVolume) volumeSeriesRef.current.setData(formattedVolume);
-        if (showAO) aoSeriesRef.current.setData(formattedAO);
+        if (aoSeriesRef.current) {
+            aoSeriesRef.current.setData(candles.map((c: any) => ({
+                time: parseTime(c.time),
+                value: typeof c.ao === 'number' ? c.ao : 0
+            })));
+        }
 
-        // --- Price Lines (Entry, SL, TP) ---
-        // Clean up previous lines
-        priceLinesRef.current.forEach(line => {
-            candleSeriesRef.current?.removePriceLine(line);
-        });
+        if (rsiSeriesRef.current) {
+            rsiSeriesRef.current.setData(candles.map((c: any) => ({
+                time: parseTime(c.time),
+                value: typeof c.rsi === 'number' ? c.rsi : 50
+            })));
+        }
+
+        // --- 4. DRAW OVERLAYS (PIVOTS, LINES) ---
+        priceLinesRef.current.forEach(l => candleSeriesRef.current?.removePriceLine(l));
         priceLinesRef.current = [];
+        extraSeriesRef.current.forEach(s => chartRef.current?.removeSeries(s));
+        extraSeriesRef.current = [];
+
+        const markers: SeriesMarker<any>[] = [];
+        const scannerTotal = metadata?.metadata?.historical_bars_used || candles.length;
+        const offset = scannerTotal - candles.length;
+        const getChartIdx = (idx: number) => idx - offset;
 
         if (metadata) {
-            const entry = metadata.entry_price;
-            const sl = metadata.stop_loss;
+            // Price Target & SL Lines
+            if (metadata.entry_price) {
+                priceLinesRef.current.push(candleSeriesRef.current.createPriceLine({
+                    price: metadata.entry_price, color: '#3b82f6', lineWidth: 2, lineStyle: LineStyle.Solid, title: 'ENTRY'
+                }));
+            }
+            if (metadata.stop_loss) {
+                priceLinesRef.current.push(candleSeriesRef.current.createPriceLine({
+                    price: metadata.stop_loss, color: '#ef4444', lineWidth: 2, lineStyle: LineStyle.Dashed, title: 'SL'
+                }));
+            }
             const tp = metadata.take_profit || metadata.tp_short;
-
-            if (entry) {
-                const line = candleSeriesRef.current.createPriceLine({
-                    price: entry,
-                    color: '#3b82f6',
-                    lineWidth: 2,
-                    lineStyle: LineStyle.Solid,
-                    axisLabelVisible: true,
-                    title: 'ENTRY',
-                });
-                priceLinesRef.current.push(line);
-            }
-            if (sl) {
-                const line = candleSeriesRef.current.createPriceLine({
-                    price: sl,
-                    color: '#ef4444',
-                    lineWidth: 2,
-                    lineStyle: LineStyle.Dashed,
-                    axisLabelVisible: true,
-                    title: 'STOP LOSS',
-                });
-                priceLinesRef.current.push(line);
-            }
             if (tp) {
-                const line = candleSeriesRef.current.createPriceLine({
-                    price: tp,
-                    color: '#10b981',
-                    lineWidth: 2,
-                    lineStyle: LineStyle.Dashed,
-                    axisLabelVisible: true,
-                    title: 'TAKE PROFIT',
-                });
-                priceLinesRef.current.push(line);
+                priceLinesRef.current.push(candleSeriesRef.current.createPriceLine({
+                    price: tp, color: '#10b981', lineWidth: 2, lineStyle: LineStyle.Dashed, title: 'TP'
+                }));
+            }
+
+            // ZigZag Structural Path
+            const pivots = metadata.metadata?.pivots;
+            if (pivots && chartRef.current) {
+                const points = Object.entries(pivots)
+                    .map(([key, p]: [string, any]) => {
+                        const cIdx = getChartIdx(p.idx);
+                        if (candles[cIdx]) {
+                            const t = parseTime(candles[cIdx].time);
+                            markers.push({ time: t, position: 'belowBar', color: '#f59e0b', shape: 'arrowUp', text: key });
+                            return { time: t, value: p.price };
+                        }
+                        return null;
+                    })
+                    .filter((p): p is {time: any, value: number} => p !== null);
+
+                if (points.length > 1) {
+                    const zigzag = chartRef.current.addLineSeries({
+                        color: 'rgba(245, 158, 11, 0.3)', lineWidth: 2, lastValueVisible: false, priceLineVisible: false
+                    });
+                    zigzag.setData(points);
+                    extraSeriesRef.current.push(zigzag);
+                }
+            }
+
+            // Current Entry Candle Marker
+            if (metadata.entry_candle_index !== undefined) {
+                const t = parseTime(candles[getChartIdx(metadata.entry_candle_index)]?.time);
+                if (t) markers.push({ time: t, position: 'aboveBar', color: '#3b82f6', shape: 'arrowDown', text: 'BUY' });
             }
         }
 
-        // Markers Logic
-        const markers: any[] = [];
-
-        // 1. Pivots (W1-W5)
-        if (metadata?.metadata?.pivots) {
-            Object.entries(metadata.metadata.pivots).forEach(([key, p]: [string, any]) => {
-                const targetTime = parseTime(candles[p.idx]?.time);
-                if (targetTime) {
-                    markers.push({
-                        time: targetTime, position: 'belowBar',
-                        color: '#f59e0b', shape: 'arrowUp', text: key
-                    });
-                }
-            });
-        }
-
-        // 2. Backtest Trades
-        if (data?.trades) {
+        // Backtest Trade Execution Markers
+        if (data.trades) {
             data.trades.forEach((t: any) => {
-                markers.push({
-                    time: parseTime(t.entry_ts), position: 'belowBar',
-                    color: '#10b981', shape: 'arrowUp', text: `BUY ${t.lots ?? ''}L`
-                });
-                // FIX: sebelumnya warna exit SELALU merah (#ef4444) apapun hasilnya,
-                // termasuk saat TAKE PROFIT dengan pnl positif -- menyesatkan secara
-                // visual. Sekarang warna mengikuti hasil pnl riil per trade.
-                const isProfit = typeof t.pnl === 'number' ? t.pnl >= 0 : t.reason === 'TAKE PROFIT';
-                markers.push({
-                    time: parseTime(t.exit_ts), position: 'aboveBar',
-                    color: isProfit ? '#10b981' : '#ef4444',
-                    shape: 'arrowDown',
-                    text: `SELL (${t.reason}${typeof t.pnl === 'number' ? `, ${t.pnl >= 0 ? '+' : ''}${Math.round(t.pnl).toLocaleString()}` : ''})`
-                });
+                markers.push({ time: parseTime(t.entry_ts), position: 'belowBar', color: '#10b981', shape: 'arrowUp', text: 'B' });
+                markers.push({ time: parseTime(t.exit_ts), position: 'aboveBar', color: t.pnl >= 0 ? '#10b981' : '#ef4444', shape: 'arrowDown', text: 'S' });
             });
         }
 
@@ -212,63 +233,27 @@ export const PatternChart: React.FC<PatternChartProps> = ({ data, metadata, inte
             candleSeriesRef.current.setMarkers(markers);
         }
 
-        chartRef.current?.timeScale().fitContent();
-    }, [data, metadata, showVolume, showAO]);
+        // Only auto-fit once per symbol to prevent annoying jumping during live updates
+        if (isNewSymbol) {
+            chartRef.current.timeScale().fitContent();
+        }
+
+    }, [data, metadata]);
 
     return (
         <div className="w-full h-full relative group">
-            {/* Control Bar */}
             {interactive && (
                 <div className="absolute top-4 right-6 z-20 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <div className="flex bg-slate-900/80 backdrop-blur-md border border-slate-700 rounded-xl overflow-hidden p-1 shadow-2xl">
-                        <button
-                            onClick={() => setShowVolume(!showVolume)}
-                            className={`p-2 rounded-lg transition-all ${showVolume ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
-                            title="Toggle Volume"
-                        >
-                            <BarChart2 className="w-4 h-4" />
-                        </button>
-                        <button
-                            onClick={() => setShowAO(!showAO)}
-                            className={`p-2 rounded-lg transition-all ${showAO ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
-                            title="Toggle Awesome Oscillator"
-                        >
-                            <Zap className="w-4 h-4" />
-                        </button>
-                        <div className="w-px bg-slate-700 mx-1 my-1" />
-                        <button
-                            onClick={() => setLayout(layout === 'standard' ? 'expanded' : 'standard')}
-                            className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
-                            title="Switch Layout"
-                        >
-                            <LayoutGrid className="w-4 h-4" />
-                        </button>
+                    <div className="flex bg-slate-900/90 backdrop-blur-md border border-slate-700 rounded-xl p-1 shadow-2xl">
+                        <button onClick={() => setShowVolume(!showVolume)} className={`p-2 rounded-lg transition-all ${showVolume ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`} title="Volume"><BarChart2 className="w-4 h-4" /></button>
+                        <button onClick={() => setShowAO(!showAO)} className={`p-2 rounded-lg transition-all ${showAO ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`} title="AO"><Zap className="w-4 h-4" /></button>
+                        <button onClick={() => setShowRSI(!showRSI)} className={`p-2 rounded-lg transition-all ${showRSI ? 'bg-amber-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`} title="RSI"><Eye className="w-4 h-4" /></button>
                     </div>
                 </div>
             )}
-
             <div ref={chartContainerRef} className="w-full h-full" />
-
-            {/* Info Labels */}
-            <div className="absolute top-4 left-6 pointer-events-none z-10 space-y-2">
-                <div className="flex flex-wrap items-center gap-3 bg-slate-950/40 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/5">
-                    <div className="flex items-center gap-1.5">
-                        <div className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />
-                        <span className="text-[9px] font-black text-slate-300 uppercase tracking-tighter">IDX Realtime</span>
-                    </div>
-                    {showVolume && (
-                        <div className="flex items-center gap-1.5">
-                            <div className="w-2.5 h-2.5 rounded-sm bg-emerald-500/30" />
-                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">Volume</span>
-                        </div>
-                    )}
-                    {showAO && (
-                        <div className="flex items-center gap-1.5">
-                            <div className="w-2.5 h-0.5 bg-cyan-400" />
-                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">AO</span>
-                        </div>
-                    )}
-                </div>
+            <div className="absolute top-4 left-6 pointer-events-none z-10 flex gap-3 bg-slate-950/40 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-white/5">
+                <div className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /><span className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">IDX REALTIME</span></div>
             </div>
         </div>
     );

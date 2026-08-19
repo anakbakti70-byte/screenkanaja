@@ -54,8 +54,8 @@ async def get_stock_candles(symbol: str, timeframe: str = "1d"):
         clean_symbol = symbol.upper().replace(".JK", "")
         yahoo_symbol = f"{clean_symbol}.JK"
 
-        # Fetch 150 bars for indicator stability
-        df = provider.get_ohlcv(yahoo_symbol, timeframe, limit=150)
+        # Fetch 200 bars to align perfectly with Scanner logic (No Lag)
+        df = provider.get_ohlcv(yahoo_symbol, timeframe, limit=200)
 
         if df.empty:
             raise HTTPException(status_code=404, detail=f"No data found for {symbol}")

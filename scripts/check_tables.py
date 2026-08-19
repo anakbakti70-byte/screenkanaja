@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS price_snapshot (
 -- 3. Divergence Signal
 CREATE TABLE IF NOT EXISTS divergence_signal (
     id                BIGSERIAL PRIMARY KEY,
+    signal_id         VARCHAR(255) UNIQUE, -- symbol:method:timeframe:pattern_idx:entry_idx
     symbol            VARCHAR(20) REFERENCES stock_master(symbol),
     market            VARCHAR(10) DEFAULT 'idx',
     timeframe         VARCHAR(10),
@@ -59,10 +60,15 @@ CREATE TABLE IF NOT EXISTS divergence_signal (
     risk_reward       NUMERIC,
     indicator_used    TEXT,
     score             NUMERIC,
+    confidence        NUMERIC DEFAULT 0,
+    pattern_candle_index INTEGER,
+    entry_candle_index   INTEGER,
+    signal_age        INTEGER DEFAULT 0,
+    reason            TEXT,
     metadata          JSONB,
     confirm_candle_ts TIMESTAMP WITH TIME ZONE,
     created_at        TIMESTAMP WITH TIME ZONE DEFAULT now(),
-    UNIQUE(symbol, method, timeframe)
+    UNIQUE(symbol, method, timeframe, pattern_candle_index, entry_candle_index)
 );
 
 -- 4. Cache Khusus (Hemat Database)
@@ -80,45 +86,132 @@ CREATE TABLE IF NOT EXISTS ohlcv_cache (
 );
 CREATE INDEX IF NOT EXISTS idx_ohlcv_cache_ts ON ohlcv_cache (ts DESC);
 
--- Optimasi Performa (Indexes tambahan)
-CREATE INDEX IF NOT EXISTS idx_stock_master_active_price ON stock_master (is_active, last_price) WHERE is_active = true;
-CREATE INDEX IF NOT EXISTS idx_stock_master_listing ON stock_master (listing_date DESC NULLS LAST);
-CREATE INDEX IF NOT EXISTS idx_signal_created_at ON divergence_signal (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_signal_score ON divergence_signal (score DESC NULLS LAST);
-CREATE INDEX IF NOT EXISTS idx_signal_market_tf ON divergence_signal (market, timeframe);
-
--- 5. Users
+-- 5. Users (Ensure balance is Rp 1 Trillion)
+-- Note: users.id might already be UUID from Supabase Auth
 CREATE TABLE IF NOT EXISTS users (
-    id                BIGSERIAL PRIMARY KEY,
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username          VARCHAR(255) UNIQUE NOT NULL,
     hashed_password   TEXT NOT NULL,
     role              VARCHAR(20) DEFAULT 'user',
+    balance           NUMERIC DEFAULT 1000000000000,
     created_at        TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- 6. Backtest Sessions
+CREATE TABLE IF NOT EXISTS backtest_sessions (
+    id                BIGSERIAL PRIMARY KEY,
+    user_id           UUID REFERENCES users(id),
+    name              VARCHAR(255),
+    initial_balance   NUMERIC DEFAULT 1000000000000,
+    current_balance   NUMERIC DEFAULT 1000000000000,
+    status            VARCHAR(20) DEFAULT 'ACTIVE',
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    updated_at        TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- 7. Backtest Positions
+CREATE TABLE IF NOT EXISTS backtest_positions (
+    id                BIGSERIAL PRIMARY KEY,
+    session_id        BIGINT REFERENCES backtest_sessions(id) ON DELETE CASCADE,
+    symbol            VARCHAR(20),
+    avg_price         NUMERIC,
+    quantity          BIGINT,
+    stop_loss         NUMERIC,
+    take_profit        NUMERIC,
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    updated_at        TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    UNIQUE(session_id, symbol)
+);
+
+-- 8. Backtest Orders
+CREATE TABLE IF NOT EXISTS backtest_orders (
+    id                BIGSERIAL PRIMARY KEY,
+    session_id        BIGINT REFERENCES backtest_sessions(id) ON DELETE CASCADE,
+    symbol            VARCHAR(20),
+    side              VARCHAR(10),
+    order_type        VARCHAR(20),
+    quantity          BIGINT,
+    price             NUMERIC,
+    stop_loss         NUMERIC,
+    take_profit        NUMERIC,
+    status            VARCHAR(20) DEFAULT 'PENDING',
+    source            VARCHAR(50),
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    filled_at         TIMESTAMP WITH TIME ZONE
+);
+
+-- 9. Backtest Transactions
+CREATE TABLE IF NOT EXISTS backtest_transactions (
+    id                BIGSERIAL PRIMARY KEY,
+    session_id        BIGINT REFERENCES backtest_sessions(id) ON DELETE CASCADE,
+    symbol            VARCHAR(20),
+    side              VARCHAR(10),
+    quantity          BIGINT,
+    price             NUMERIC,
+    gross_amount      NUMERIC,
+    fee               NUMERIC,
+    net_amount        NUMERIC,
+    realized_pnl      NUMERIC,
+    realized_pnl_pct  NUMERIC,
+    source            VARCHAR(50), -- MANUAL, STRATEGY
+    exit_reason       VARCHAR(50), -- MANUAL, STOP_LOSS, TAKE_PROFIT, TIMEOUT
+    ts                TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- 10. Portfolio Snapshots
+CREATE TABLE IF NOT EXISTS backtest_portfolio_snapshots (
+    id                BIGSERIAL PRIMARY KEY,
+    session_id        BIGINT REFERENCES backtest_sessions(id) ON DELETE CASCADE,
+    ts                TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    cash_balance      NUMERIC,
+    market_value      NUMERIC,
+    total_equity      NUMERIC
 );
 """
 
 SQL_MIGRATIONS = [
-    ("users", "balance", "NUMERIC DEFAULT 100000000"),
-    ("users", "role", "VARCHAR(20) DEFAULT 'user'"),
+    ("users", "balance", "NUMERIC DEFAULT 1000000000000"),
     ("stock_master", "last_price", "NUMERIC"),
     ("divergence_signal", "market", "VARCHAR(10) DEFAULT 'idx'"),
     ("divergence_signal", "risk_reward", "NUMERIC"),
-    ("divergence_signal", "tp_far", "NUMERIC")
+    ("divergence_signal", "tp_far", "NUMERIC"),
+    ("divergence_signal", "confidence", "NUMERIC DEFAULT 0"),
+    ("divergence_signal", "entry_zone_low", "NUMERIC"),
+    ("divergence_signal", "entry_zone_high", "NUMERIC"),
+    ("divergence_signal", "pattern_candle_index", "INTEGER"),
+    ("divergence_signal", "entry_candle_index", "INTEGER"),
+    ("divergence_signal", "signal_age", "INTEGER DEFAULT 0"),
+    ("divergence_signal", "reason", "TEXT"),
+    ("backtest_transactions", "source", "VARCHAR(50)"),
+    ("divergence_signal", "signal_id", "VARCHAR(255) UNIQUE")
 ]
 
-SQL_INSERT_ADMIN = """
-INSERT INTO users (username, hashed_password, balance)
-SELECT 'admin', '$2b$12$6uX7e5M8p6M5Zk/P1z9/8O6vL.YxZ7X3U1Z8u7z8Y7y6v5u4t3s2r', 100000000
-WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin');
-"""
+def update_unique_constraint(cur):
+    """Updates the unique constraint for divergence_signal to be more granular."""
+    try:
+        print("🧹 Cleaning up duplicates in divergence_signal before updating constraint...")
+        # 1. Hapus duplikat (keep only one)
+        cur.execute("""
+            DELETE FROM divergence_signal a
+            USING divergence_signal b
+            WHERE a.id < b.id
+            AND a.symbol = b.symbol
+            AND a.method = b.method
+            AND a.timeframe = b.timeframe
+            AND a.pattern_candle_index = b.pattern_candle_index
+            AND COALESCE(a.entry_candle_index, -1) = COALESCE(b.entry_candle_index, -1);
+        """)
 
-SQL_MAINTENANCE = """
--- Hapus cache yang sangat lama (lebih dari 3 bulan) agar DB tetap ringan
-DELETE FROM ohlcv_cache WHERE ts < NOW() - INTERVAL '90 days';
+        # 2. Drop old constraint
+        cur.execute("ALTER TABLE divergence_signal DROP CONSTRAINT IF EXISTS divergence_signal_symbol_method_timeframe_key;")
 
--- Hapus signal lama (lebih dari 6 bulan) jika statusnya bukan 'READY' atau sudah basi
-DELETE FROM divergence_signal WHERE created_at < NOW() - INTERVAL '180 days';
-"""
+        # 3. Add new constraint
+        cur.execute("ALTER TABLE divergence_signal DROP CONSTRAINT IF EXISTS divergence_signal_unique_instance;")
+        cur.execute("ALTER TABLE divergence_signal ADD CONSTRAINT divergence_signal_unique_instance UNIQUE (symbol, method, timeframe, pattern_candle_index, entry_candle_index);")
+
+        print("✅ Granular unique constraint added to divergence_signal.")
+    except Exception as e:
+        print(f"⚠️ Could not update unique constraint: {e}")
 
 def setup_database():
     if not DB_URI:
@@ -131,25 +224,19 @@ def setup_database():
         conn.autocommit = True
         with conn.cursor() as cur:
             print("🛠️ Creating tables if not exist...")
+            # We wrap table creation in try-except if user_id type mismatch happens
             cur.execute(SQL_CREATE_TABLES)
 
             print("📈 Checking for missing columns (Migrations)...")
             for table, col, col_type in SQL_MIGRATIONS:
-                cur.execute(f"""
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                                       WHERE table_name='{table}' AND column_name='{col}') THEN
-                            ALTER TABLE {table} ADD COLUMN {col} {col_type};
-                        END IF;
-                    END $$;
-                """)
+                try:
+                    cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type};")
+                except psycopg2.errors.DuplicateColumn:
+                    pass
+                except Exception as e:
+                    print(f"⚠️ Migration Error ({table}.{col}): {e}")
 
-            print("👤 Ensuring admin user exists...")
-            cur.execute(SQL_INSERT_ADMIN)
-
-            print("🧹 Running maintenance (Cleaning old data)...")
-            cur.execute(SQL_MAINTENANCE)
+            update_unique_constraint(cur)
 
             print("✅ Database schema verified and updated.")
         conn.close()

@@ -1,94 +1,73 @@
 import os
 import sys
 import time
-import yfinance as yf
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
+import yfinance as yf
 
 # Add apps/backend to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'apps', 'backend'))
 
 from app.core.database import supabase
-from app.core.market_utils import is_idx_market_open
+from app.scanner.scanner_core import is_idx_market_open
 
 # Load environment variables
 load_dotenv(Path(__file__).parent.parent / "apps" / "backend" / ".env")
 
-def update_realtime_data():
+def update_market_data_realtime():
     """
-    Worker 2: Update harga real-time hanya untuk emiten yang SUDAH ADA di database.
+    Worker 2: High-Frequency Sync (1s interval during market hours).
+    Ensures data exists in DB even if market just closed.
     """
-    # Rule: Only run during IDX Market Hours (08:45-12:00, 12:24-17:00 WIB)
-    if not is_idx_market_open():
-        print(f"😴 [Worker 2] Market is CLOSED. Skipping update at {datetime.now()}.")
-        return
+    market_active = is_idx_market_open()
 
-    print(f"🔄 [Worker 2] Starting Real-time Price Update (Market Open): {datetime.now()}")
+    # Allow a 30-min window after close to ensure EOD sync
+    now = datetime.now()
+    if not market_active:
+        if now.hour == 16 and now.minute <= 30:
+            print("🕒 Market recently closed. Final EOD Sync...")
+        else:
+            return False
 
     try:
-        # 1. Ambil HANYA emiten yang sudah terdaftar di database (stock_master)
-        # Kita filter yang aktif agar lebih efisien
-        res = supabase.table("stock_master").select("symbol").eq("is_active", True).execute()
-        db_stocks = res.data
+        # Fetch active stocks under 1000
+        res = supabase.table("stock_master").select("symbol").eq("is_active", True).lte("last_price", 1000).execute()
+        symbols = [s['symbol'] for s in res.data]
+        if not symbols: return True
 
-        if not db_stocks:
-            print("⚠️ Tidak ada data emiten di database. Pastikan Worker 1 (Discovery) sudah berjalan.")
-            return
-
-        symbols = [s['symbol'] for s in db_stocks]
-        # Format untuk yfinance (tambah .JK)
         yf_symbols = [f"{s}.JK" for s in symbols]
 
-        print(f"📈 Mengupdate {len(symbols)} emiten yang ada di database...")
-
-        # 2. Download data terbaru secara massal (Batch Download)
-        # yfinance.download jauh lebih cepat daripada memanggil Ticker satu per satu
+        # Use period="5d" instead of "1d" to ensure we get data even for illiquid stocks
+        # and disable threads to avoid sqlite 'database is locked' errors
         data = yf.download(
             tickers=yf_symbols,
-            period="1d",
-            interval="1m", # Ambil interval terkecil untuk harga paling fresh
+            period="5d",
+            interval="1m",
             group_by='ticker',
             auto_adjust=True,
-            prepost=True,
-            threads=True, # Gunakan multi-threading
+            threads=False,
             progress=False
         )
-
-        updates_count = 0
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        # 3. Proses hasil download dan update ke Supabase
         for symbol in symbols:
             try:
                 yf_sym = f"{symbol}.JK"
-                # Cek apakah data tersedia untuk simbol ini
                 if yf_sym in data.columns.levels[0]:
-                    ticker_data = data[yf_sym]
+                    ticker_data = data[yf_sym].dropna()
                     if not ticker_data.empty:
-                        # Ambil harga closing terakhir
                         last_price = float(ticker_data['Close'].iloc[-1])
-
-                        # Update ke database
-                        supabase.table("stock_master").update({
-                            "last_price": last_price,
-                            "updated_at": now_iso
-                        }).eq("symbol", symbol).execute()
-
-                        updates_count += 1
-            except Exception as e:
-                # Lewati jika satu emiten gagal, lanjut ke yang lain
-                continue
-
-        print(f"✅ [Worker 2] Berhasil update {updates_count}/{len(symbols)} emiten.")
-        print(f"🕒 Selesai pada {datetime.now()}")
-
+                        supabase.table("stock_master").update({"last_price": last_price, "updated_at": now_iso}).eq("symbol", symbol).execute()
+            except: continue
+        return True
     except Exception as e:
-        print(f"❌ [Worker 2] Error fatal: {e}")
+        print(f"❌ Worker Error: {e}")
+        return True
 
 if __name__ == "__main__":
-    # Jalankan terus menerus selama sistem aktif
     while True:
-        update_realtime_data()
-        # High-Speed 1s polling for stock master prices during market hours
-        time.sleep(1)
+        is_running = update_market_data_realtime()
+        # Ultra real-time: 0.1s delay when market is active
+        wait_time = 0.1 if is_running else 300
+        time.sleep(wait_time)

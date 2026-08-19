@@ -4,44 +4,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, stocks, scanner, users, backtest
 import asyncio
 from contextlib import asynccontextmanager
-from app.scanner.scanner_core import ScannerEngine
 
 # Global error handler for database issues
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start background scanner only if possible
-    try:
-        engine = ScannerEngine()
-        task = asyncio.create_task(scheduled_scanner(engine))
-        yield
-        task.cancel()
-    except Exception as e:
-        print(f"LIFESPAN ERROR: {e}")
-        yield
-
-async def scheduled_scanner(engine):
-    """
-    Background task to run scanner automatically every 15 minutes.
-    """
-    while True:
-        try:
-            # Check if tables exist first
-            print("AUTO-SCAN: Starting periodic market scan...")
-            await engine.run_scan(market="idx", timeframe="1d")
-            print("AUTO-SCAN: Finished.")
-        except Exception as e:
-            print(f"AUTO-SCAN ERROR: {e}")
-        
-        await asyncio.sleep(900)
+    # Background scanner and sync workers are managed externally via start_all.sh
+    # This keeps the API lightweight and prevents initialization hangs.
+    print("🚀 API: System online and responsive.", flush=True)
+    yield
+    print("🛑 API: System shutting down.", flush=True)
 
 app = FastAPI(title="Stock Trading Scanner API", lifespan=lifespan)
+print("FASTAPI: Application instance created.", flush=True)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    print(f"GLOBAL ERROR: {exc}")
+    import traceback
+    print(f"GLOBAL ERROR: {exc}", flush=True)
+    traceback.print_exc()
     return JSONResponse(
         status_code=500,
-        content={"message": "Internal Server Error", "detail": str(exc)},
+        content={
+            "message": "Internal Server Error",
+            "detail": str(exc),
+            "trace": traceback.format_exc()
+        },
     )
 
 # Setup CORS
